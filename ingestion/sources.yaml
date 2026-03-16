@@ -1,0 +1,105 @@
+# sources.yaml
+# Defines every source to scrape during ingestion.
+# Add new sources here — scraper.py reads this at runtime.
+#
+# Fields per source:
+#   name         : human-readable identifier
+#   base_url     : root URL (used for resolving relative links)
+#   urls         : list of specific URLs to fetch
+#   type         : "html" | "pdf" | "js_rendered" (needs Playwright)
+#   doc_type     : value stored in Qdrant payload (for filtering)
+#   topic_tags   : list of tags stored in payload (for filtering)
+#   jurisdiction : which agency owns this content
+#   priority     : 1=primary official, 2=secondary, 3=community
+
+sources:
+  # ── USCIS ──────────────────────────────────────────────────────────────────
+  - name: USCIS Policy Manual - Nonimmigrant Workers (H1B)
+    base_url: https://www.uscis.gov
+    urls:
+      - https://www.uscis.gov/policy-manual/volume-2-part-b
+      - https://www.uscis.gov/policy-manual/volume-2-part-f
+      - https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations
+    type: html
+    doc_type: policy_manual
+    topic_tags: [h1b, work_visa, specialty_occupation]
+    jurisdiction: uscis
+    priority: 1
+
+  - name: USCIS Policy Manual - Adjustment of Status (Green Card)
+    base_url: https://www.uscis.gov
+    urls:
+      - https://www.uscis.gov/policy-manual/volume-7
+    type: html
+    doc_type: policy_manual
+    topic_tags: [green_card, adjustment_of_status, i485]
+    jurisdiction: uscis
+    priority: 1
+
+  - name: USCIS OPT and F1 Student Guidance
+    base_url: https://www.uscis.gov
+    urls:
+      - https://www.uscis.gov/working-in-the-united-states/students-and-exchange-visitors/optional-practical-training-opt-for-f-1-students
+      - https://www.uscis.gov/working-in-the-united-states/students-and-exchange-visitors/optional-practical-training-extension-for-stem-students-stem-opt
+    type: html
+    doc_type: policy_manual
+    topic_tags: [f1, opt, stem_opt, student_visa]
+    jurisdiction: uscis
+    priority: 1
+
+  # ── IRS ───────────────────────────────────────────────────────────────────
+  - name: IRS Publication 519 - US Tax Guide for Aliens
+    base_url: https://www.irs.gov
+    urls:
+      - https://www.irs.gov/pub/irs-pdf/p519.pdf
+    type: pdf
+    doc_type: tax_guide
+    topic_tags: [taxes, nonresident_alien, tax_return, pub519]
+    jurisdiction: irs
+    priority: 1
+
+  - name: IRS 1040-NR Instructions
+    base_url: https://www.irs.gov
+    urls:
+      - https://www.irs.gov/pub/irs-pdf/i1040nr.pdf
+    type: pdf
+    doc_type: tax_guide
+    topic_tags: [taxes, 1040nr, nonresident_alien, tax_return]
+    jurisdiction: irs
+    priority: 1
+
+  - name: IRS Tax Treaties
+    base_url: https://www.irs.gov
+    urls:
+      - https://www.irs.gov/businesses/international-businesses/united-states-income-tax-treaties-a-to-z
+    type: html
+    doc_type: tax_guide
+    topic_tags: [tax_treaty, taxes, international]
+    jurisdiction: irs
+    priority: 1
+
+  # ── DOL ───────────────────────────────────────────────────────────────────
+  - name: DOL H1B Fact Sheets (WHD)
+    base_url: https://www.dol.gov
+    urls:
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62C.pdf
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62G.pdf
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62M.pdf
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62Q.pdf
+    type: pdf
+    doc_type: labor_condition
+    topic_tags:
+      [h1b, lca, prevailing_wage, employer_obligations, employee_rights]
+    jurisdiction: dol
+    priority: 1
+
+  # ── Travel State ──────────────────────────────────────────────────────────
+  - name: Visa Bulletin
+    base_url: https://travel.state.gov
+    urls:
+      - https://travel.state.gov/content/travel/en/legal/visa-law0/visa-bulletin.html
+    type: html
+    doc_type: visa_bulletin
+    topic_tags: [visa_bulletin, priority_dates, green_card]
+    jurisdiction: state_dept
+    priority: 1
