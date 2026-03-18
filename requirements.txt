@@ -5,10 +5,9 @@ qdrant-client==1.17.1
 openai>=1.30.0
 
 # Ingestion / parsing
-unstructured==0.16.11
-unstructured-inference==0.7.36
+unstructured==0.16.11        # HTML parsing only (partition_html)
 pymupdf==1.25.5
-pdfplumber==0.11.4
+pdfplumber==0.11.4           # PDF parsing + table extraction
 playwright==1.50.0
 beautifulsoup4==4.12.3
 requests==2.32.3
@@ -16,4 +15,4 @@ pyyaml==6.0.2
 
 # Utilities
 python-dotenv==1.0.1
-tqdm==4.67.1
+tqdm==4.67.1openai==2.28.0

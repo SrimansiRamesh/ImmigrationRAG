@@ -452,10 +452,3 @@ COHERE_API_KEY=your-cohere-key
 | Two modes    | System prompt switching          | Same retrieval pipeline, different generation persona                                |
 | Chunking     | Hierarchical parent-child        | Small chunks for retrieval precision, parent chunks for generation context           |
 | LLM          | GPT-OSS-120B on Azure            | Free credits                                                                         |
-
-```
-
----
-
-Copy everything above between the opening and closing triple backticks. That's your full `CLAUDE.md`. Drop it in your project root and any new session will have full context of every decision we've made.
-```

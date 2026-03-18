@@ -53,4 +53,6 @@ eval/results/
 .vscode/
 .idea/
 *.swp
-*.swo
+*.swodata/embedded/
+test_azure.py
+test.py
