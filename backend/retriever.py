@@ -22,9 +22,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import (
     SparseVector,
     NamedVector,
-    NamedSparseVector,
-    SearchRequest,
     ScoredPoint,
+    QueryResponse,
 )
 from backend.config import (
     AZURE_OPENAI_ENDPOINT,
@@ -149,24 +148,18 @@ def hybrid_search(
             )]
         )
 
-    # Qdrant hybrid search using named vectors
-    # We search on "child" chunks only — parents have no vectors
-    results = _qdrant_client.search(
+    # Use query_points (replaces search in qdrant-client >= 1.7)
+    results = _qdrant_client.query_points(
         collection_name=QDRANT_COLLECTION_NAME,
-        query_vector=NamedVector(name="dense", vector=dense_vector),
+        query=dense_vector,
+        using="dense",
         query_filter=search_filter,
         limit=top_k,
         with_payload=True,
-        with_vectors=False,   # don't return vectors — saves bandwidth
+        with_vectors=False,
     )
 
-    # Also run sparse search and merge manually
-    # Note: Full hybrid (simultaneous dense+sparse) requires Qdrant's
-    # query API which is available in newer client versions.
-    # For compatibility we run dense search (primary) and rely on
-    # our sparse vectors being indexed for future hybrid query support.
-
-    return results
+    return results.points
 
 
 # ── Step 4: Reranking ─────────────────────────────────────────────────────────
@@ -347,10 +340,11 @@ def retrieve(
     # Build sources list for frontend citation display
     sources = [
         {
-            "url":       c.get("source_url", ""),
-            "section":   c.get("section", ""),
-            "doc_type":  c.get("doc_type", ""),
-            "jurisdiction": c.get("jurisdiction", ""),
+            "url":            c.get("source_url", ""),
+            "section":        c.get("section", ""),
+            "doc_type":       c.get("doc_type", ""),
+            "jurisdiction":   c.get("jurisdiction", ""),
+            "effective_date": c.get("effective_date"),
         }
         for c in parent_chunks
     ]
@@ -429,10 +423,11 @@ def retrieve_multi(
 
     sources = [
         {
-            "url":       c.get("source_url", ""),
-            "section":   c.get("section", ""),
-            "doc_type":  c.get("doc_type", ""),
-            "jurisdiction": c.get("jurisdiction", ""),
+            "url":            c.get("source_url", ""),
+            "section":        c.get("section", ""),
+            "doc_type":       c.get("doc_type", ""),
+            "jurisdiction":   c.get("jurisdiction", ""),
+            "effective_date": c.get("effective_date"),
         }
         for c in parent_chunks
     ]

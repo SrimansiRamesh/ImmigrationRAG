@@ -16,13 +16,12 @@ Everything else in the backend exists to support this.
 import logging
 from openai import AzureOpenAI
 from langchain.memory import ConversationBufferWindowMemory
-
+from google import genai
+from google.genai import types
 from backend.config import (
-    AZURE_OPENAI_ENDPOINT,
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_API_VERSION,
-    AZURE_CHAT_DEPLOYMENT,
-    AZURE_CLASSIFIER_DEPLOYMENT,
+    GEMINI_API_KEY,
+    GEMINI_CHAT_MODEL,
+    GEMINI_CLASSIFIER_MODEL,
     TEMPERATURE,
     MAX_TOKENS,
     MAX_SUB_QUERIES,
@@ -35,14 +34,27 @@ from backend.prompts import (
 from backend.retriever import retrieve, retrieve_multi
 from backend.memory import get_memory
 
+# Remove any leftover Azure chat imports — using Gemini now
+
 log = logging.getLogger(__name__)
 
-# ── LLM client ────────────────────────────────────────────────────────────────
-_llm = AzureOpenAI(
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version=AZURE_OPENAI_API_VERSION,
-)
+# ── Gemini client ─────────────────────────────────────────────────────────────
+_gemini = genai.Client(api_key=GEMINI_API_KEY)
+
+def _gemini_call(prompt: str, model: str, max_tokens: int = 1500) -> str:
+    """
+    Make a Gemini API call and return the response text.
+    Single helper used by classifier, decomposer, and generator.
+    """
+    response = _gemini.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=TEMPERATURE,
+            max_output_tokens=max_tokens,
+        )
+    )
+    return response.text.strip()
 
 
 # ── Step 1: Complexity classifier ─────────────────────────────────────────────
@@ -59,17 +71,9 @@ def classify_query(query: str) -> str:
     """
     prompt = CLASSIFIER_PROMPT.format(query=query)
     try:
-        response = _llm.chat.completions.create(
-            model=AZURE_CLASSIFIER_DEPLOYMENT,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,    # fully deterministic for routing
-            max_tokens=5,       # we only need one word back
-        )
-        result = response.choices[0].message.content.strip().lower()
-        # Sanitize — only accept exactly "simple" or "complex"
-        return "complex" if "complex" in result else "simple"
+        result = _gemini_call(prompt, GEMINI_CLASSIFIER_MODEL, max_tokens=5)
+        return "complex" if "complex" in result.lower() else "simple"
     except Exception as e:
-        # If classifier fails, default to simple — safer than crashing
         log.warning(f"Classifier failed, defaulting to simple: {e}")
         return "simple"
 
@@ -87,29 +91,16 @@ def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
     """
     prompt = DECOMPOSITION_PROMPT.format(query=query, n=n)
     try:
-        response = _llm.chat.completions.create(
-            model=AZURE_CLASSIFIER_DEPLOYMENT,  # use mini model here too
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=300,
-        )
-        raw = response.choices[0].message.content.strip()
-
-        # Parse one sub-query per line, filter empty lines
+        raw = _gemini_call(prompt, GEMINI_CLASSIFIER_MODEL, max_tokens=300)
         sub_queries = [
             line.strip()
             for line in raw.split("\n")
             if line.strip() and len(line.strip()) > 10
         ]
-
-        # Always include original query as first entry
-        # This ensures the primary intent is always retrieved
         if query not in sub_queries:
             sub_queries.insert(0, query)
-
         log.info(f"Decomposed into {len(sub_queries)} sub-queries")
-        return sub_queries[:n + 1]  # cap at n+1 (n sub-queries + original)
-
+        return sub_queries[:n + 1]
     except Exception as e:
         log.warning(f"Decomposition failed, using original query: {e}")
         return [query]
@@ -145,32 +136,37 @@ def generate_response(
     mode: str,
 ) -> tuple[str, int]:
     """
-    Generate the final response using the full LLM with context injected.
-
-    Fills in the system prompt template with:
-    - {context}: assembled parent chunks from retrieval
-    - {chat_history}: formatted conversation history
-
-    Returns:
-        tuple of (answer_text, tokens_used)
+    Generate the final response using Gemini with context injected.
     """
     system_prompt = get_system_prompt(mode).format(
         context=context,
         chat_history=chat_history,
     )
+    full_prompt = f"{system_prompt}\n\nUser question: {query}"
 
-    response = _llm.chat.completions.create(
-        model=AZURE_CHAT_DEPLOYMENT,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": query},
-        ],
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
+    gemini_model = _gemini
+    response = gemini_model.models.generate_content(
+        model=GEMINI_CHAT_MODEL,
+        contents=full_prompt,
+        config=types.GenerateContentConfig(
+            temperature=TEMPERATURE,
+            max_output_tokens=MAX_TOKENS,
+        )
     )
 
-    answer      = response.choices[0].message.content
-    tokens_used = response.usage.total_tokens
+    # Log finish reason so truncation is visible in server logs
+    try:
+        finish_reason = response.candidates[0].finish_reason
+        if str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
+            log.warning(f"Gemini finish_reason={finish_reason} — response may be truncated")
+    except Exception:
+        pass
+
+    answer = response.text.strip()
+
+    # Gemini doesn't return token counts in the same way —
+    # estimate from response length for monitoring purposes
+    tokens_used = len(full_prompt.split()) + len(answer.split())
 
     return answer, tokens_used
 

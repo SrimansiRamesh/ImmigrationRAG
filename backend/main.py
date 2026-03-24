@@ -14,13 +14,14 @@ Usage:
     uvicorn backend.main:app --reload --port 8000
 """
 
+import io
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-from backend.config import validate_config
+from backend.config import validate_config, GEMINI_API_KEY, GEMINI_CLASSIFIER_MODEL
 from backend.chain import run_chain
 from backend.memory import clear_memory, get_active_sessions
 
@@ -95,7 +96,7 @@ class ChatRequest(BaseModel):
         ...,
         description="The user's question",
         min_length=1,
-        max_length=2000,
+        max_length=50000,
     )
     mode: str = Field(
         default="student",
@@ -106,10 +107,11 @@ class ChatRequest(BaseModel):
 
 class SourceItem(BaseModel):
     """A single source citation."""
-    url:          str
-    section:      str
-    doc_type:     str
-    jurisdiction: str
+    url:            str
+    section:        str
+    doc_type:       str
+    jurisdiction:   str
+    effective_date: int | None = None
 
 
 class ChatResponse(BaseModel):
@@ -180,6 +182,97 @@ async def chat(request: ChatRequest):
             status_code=500,
             detail="An error occurred processing your request. Please try again."
         )
+
+
+SUMMARISE_THRESHOLD = 8_000   # chars (~2k tokens) — above this we summarise
+ACCEPTED_MIME_TYPES = {
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "application/octet-stream",   # some browsers send this for .md
+}
+ACCEPTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
+
+
+class ParseDocumentResponse(BaseModel):
+    filename:   str
+    text:       str
+    summarised: bool
+    char_count: int
+
+
+@app.post("/api/parse-document", response_model=ParseDocumentResponse)
+async def parse_document(file: UploadFile = File(...)):
+    """
+    Parse an uploaded document and return its text (or a Gemini summary
+    if the document is too large to fit in a chat message).
+
+    Supports: PDF, .txt, .md
+    No storage — content is returned directly to the frontend.
+    """
+    filename = file.filename or "document"
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext not in ACCEPTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{ext}'. Upload a PDF, .txt, or .md file.",
+        )
+
+    content = await file.read()
+
+    # ── Extract text ──────────────────────────────────────────────────────────
+    try:
+        if ext == ".pdf":
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                pages = [p.extract_text() for p in pdf.pages if p.extract_text()]
+            raw_text = "\n\n".join(pages).strip()
+        else:
+            raw_text = content.decode("utf-8", errors="replace").strip()
+    except Exception as e:
+        log.error(f"Document extraction failed ({filename}): {e}")
+        raise HTTPException(status_code=422, detail=f"Could not read file: {e}")
+
+    if not raw_text:
+        raise HTTPException(status_code=422, detail="No text could be extracted from this file.")
+
+    # ── Summarise if large ────────────────────────────────────────────────────
+    summarised = False
+    if len(raw_text) > SUMMARISE_THRESHOLD:
+        try:
+            from google import genai
+            from google.genai import types as gtypes
+
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            prompt = (
+                "Summarise the following document for use as context in answering questions. "
+                "Preserve ALL of the following verbatim: dates, deadlines, dollar amounts, fees, "
+                "form numbers (I-20, W-2, I-485, etc.), ID numbers, SEVIS IDs, visa types, "
+                "case numbers, names, and regulatory references (8 CFR, INA sections). "
+                "For narrative sections, summarise concisely.\n\n"
+                f"Document ({filename}):\n{raw_text}"
+            )
+            resp = client.models.generate_content(
+                model=GEMINI_CLASSIFIER_MODEL,
+                contents=prompt,
+                config=gtypes.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=2048,
+                ),
+            )
+            raw_text   = resp.text.strip()
+            summarised = True
+            log.info(f"Document summarised | file={filename} | summary_chars={len(raw_text)}")
+        except Exception as e:
+            log.warning(f"Summarisation failed, using full text: {e}")
+
+    return ParseDocumentResponse(
+        filename=filename,
+        text=raw_text,
+        summarised=summarised,
+        char_count=len(raw_text),
+    )
 
 
 @app.delete("/api/session/{session_id}")

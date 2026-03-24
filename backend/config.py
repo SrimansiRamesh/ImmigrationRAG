@@ -22,11 +22,10 @@ AZURE_OPENAI_ENDPOINT    = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY     = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
 
-# Generation model (Phase 2)
-AZURE_CHAT_DEPLOYMENT       = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-
-# Classifier model — cheaper/faster model for simple routing decisions
-AZURE_CLASSIFIER_DEPLOYMENT = os.getenv("AZURE_OPENAI_CLASSIFIER_DEPLOYMENT", "gpt-4o-mini")
+# Generation model (Phase 2) — using Gemini via Google AI
+GEMINI_API_KEY           = os.getenv("GEMINI_API_KEY")
+GEMINI_CHAT_MODEL        = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
+GEMINI_CLASSIFIER_MODEL  = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
 
 # Embedding model (used in retriever to embed queries)
 AZURE_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
@@ -56,7 +55,7 @@ MAX_SUB_QUERIES  = 3
 # temperature=0 → deterministic, factual responses
 # For immigration/legal content we want consistency, not creativity
 TEMPERATURE      = 0.0
-MAX_TOKENS       = 1500
+MAX_TOKENS       = 16384
 
 # ── Memory ────────────────────────────────────────────────────────────────────
 # How many conversation turns to keep in session memory
@@ -68,10 +67,6 @@ def validate_config() -> None:
     """
     Check all required environment variables are set.
     Called once at server startup — fails fast before any requests are served.
-
-    Why fail at startup rather than at request time?
-    Better to know immediately that QDRANT_URL is missing than to have
-    the first user request fail with a cryptic error 10 minutes after deploy.
     """
     required = {
         "AZURE_OPENAI_ENDPOINT":    AZURE_OPENAI_ENDPOINT,
@@ -79,6 +74,7 @@ def validate_config() -> None:
         "QDRANT_URL":               QDRANT_URL,
         "QDRANT_API_KEY":           QDRANT_API_KEY,
         "COHERE_API_KEY":           COHERE_API_KEY,
+        "GEMINI_API_KEY":           GEMINI_API_KEY,
     }
     missing = [k for k, v in required.items() if not v]
     if missing:

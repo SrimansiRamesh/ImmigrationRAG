@@ -1,0 +1,80 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --font-display: var(--font-playfair), "Playfair Display", serif;
+  --font-body: var(--font-ibm-plex), "IBM Plex Sans", system-ui, sans-serif;
+
+  --bg-base:     #070B16;
+  --bg-surface:  #0B1323;
+  --bg-elevated: #101D30;
+  --bg-input:    #0D1829;
+  --border:      #182338;
+  --border-dim:  #101B2E;
+
+  --accent:      #C4893A;
+  --accent-glow: rgba(196, 137, 58, 0.12);
+
+  --text-primary:   #D8E3F5;
+  --text-secondary: #6B7F9E;
+  --text-muted:     #3A4D68;
+
+  --user-bg:   #1A3460;
+  --user-text: #AAC3EF;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* Slim custom scrollbar */
+::-webkit-scrollbar       { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1C2E4A; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #253E61; }
+
+/* Message highlight flash when navigating from sidebar */
+@keyframes highlight-flash {
+  0%   { background-color: rgba(196, 137, 58, 0.18); }
+  60%  { background-color: rgba(196, 137, 58, 0.06); }
+  100% { background-color: transparent; }
+}
+.highlight-flash {
+  animation: highlight-flash 2s ease-out;
+  border-radius: 8px;
+}
+
+/* Blinking cursor for typewriter */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--text-secondary);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+/* Bounce dots for loading */
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%           { transform: translateY(-6px); opacity: 1; }
+}
+
+html { scroll-behavior: smooth; }
