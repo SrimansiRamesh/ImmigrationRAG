@@ -6,18 +6,19 @@ The main RAG chain — orchestrates the full pipeline:
   2. Route accordingly (direct retrieval vs decompose + RAG-Fusion)
   3. Retrieve and rerank relevant chunks
   4. Inject context + memory into system prompt
-  5. Generate response with Azure OpenAI
-  6. Return answer + sources + tokens used
+  5. Generate response with Gemini
+  6. Return answer + sources + context + tokens used
 
 This is the single function the FastAPI endpoint calls.
 Everything else in the backend exists to support this.
 """
 
 import logging
-from openai import AzureOpenAI
 from langchain.memory import ConversationBufferWindowMemory
 from google import genai
 from google.genai import types
+from typing import Optional
+
 from backend.config import (
     GEMINI_API_KEY,
     GEMINI_CHAT_MODEL,
@@ -34,12 +35,11 @@ from backend.prompts import (
 from backend.retriever import retrieve, retrieve_multi
 from backend.memory import get_memory
 
-# Remove any leftover Azure chat imports — using Gemini now
-
 log = logging.getLogger(__name__)
 
 # ── Gemini client ─────────────────────────────────────────────────────────────
 _gemini = genai.Client(api_key=GEMINI_API_KEY)
+
 
 def _gemini_call(prompt: str, model: str, max_tokens: int = 1500) -> str:
     """
@@ -62,11 +62,8 @@ def _gemini_call(prompt: str, model: str, max_tokens: int = 1500) -> str:
 def classify_query(query: str) -> str:
     """
     Classify query as 'simple' or 'complex' using a lightweight LLM call.
-
-    Uses the cheaper/faster classifier model (gpt-4o-mini) — not the
-    full generation model. This saves tokens since classification is
-    a simple routing decision, not a knowledge task.
-
+    Uses the cheaper/faster classifier model — saves tokens since
+    classification is a routing decision, not a knowledge task.
     Returns: "simple" or "complex"
     """
     prompt = CLASSIFIER_PROMPT.format(query=query)
@@ -83,10 +80,8 @@ def classify_query(query: str) -> str:
 def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
     """
     Break a complex query into n focused sub-queries.
-
     Each sub-query is independently retrievable and covers
     a different aspect of the original question.
-
     Returns: list of sub-query strings
     """
     prompt = DECOMPOSITION_PROMPT.format(query=query, n=n)
@@ -111,9 +106,7 @@ def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
 def format_chat_history(memory: ConversationBufferWindowMemory) -> str:
     """
     Format LangChain memory into a string for the system prompt.
-
-    Converts message objects into a readable conversation format
-    that the LLM can understand as prior context.
+    Converts message objects into a readable conversation format.
     """
     messages = memory.chat_memory.messages
     if not messages:
@@ -134,18 +127,35 @@ def generate_response(
     context: str,
     chat_history: str,
     mode: str,
+    document_context: Optional[str] = None,
 ) -> tuple[str, int]:
     """
     Generate the final response using Gemini with context injected.
+    If document_context is provided, it is injected before RAG context
+    so the LLM always has the user's document fully in view.
     """
     system_prompt = get_system_prompt(mode).format(
         context=context,
         chat_history=chat_history,
     )
+
+    # Prepend uploaded document context if present
+    if document_context:
+        doc_section = (
+            "## User-Uploaded Document\n"
+            "The user has uploaded the following document. "
+            "Use it as primary context when answering their question.\n\n"
+            f"{document_context}\n\n"
+            "## Retrieved Context from Knowledge Base"
+        )
+        system_prompt = system_prompt.replace(
+            "Context from official sources:",
+            doc_section + "\nContext from official sources:"
+        )
+
     full_prompt = f"{system_prompt}\n\nUser question: {query}"
 
-    gemini_model = _gemini
-    response = gemini_model.models.generate_content(
+    response = _gemini.models.generate_content(
         model=GEMINI_CHAT_MODEL,
         contents=full_prompt,
         config=types.GenerateContentConfig(
@@ -162,10 +172,7 @@ def generate_response(
     except Exception:
         pass
 
-    answer = response.text.strip()
-
-    # Gemini doesn't return token counts in the same way —
-    # estimate from response length for monitoring purposes
+    answer      = response.text.strip()
     tokens_used = len(full_prompt.split()) + len(answer.split())
 
     return answer, tokens_used
@@ -174,27 +181,26 @@ def generate_response(
 # ── Main chain function ───────────────────────────────────────────────────────
 
 def run_chain(
-    message: str,
-    session_id: str,
-    mode: str = "student",
+    message:          str,
+    session_id:       str,
+    mode:             str = "student",
+    document_context: Optional[str] = None,
 ) -> dict:
     """
     Run the full RAG chain for a user message.
 
-    This is the single function called by the FastAPI endpoint.
-    Handles the complete pipeline from raw user message to
-    structured response with citations.
-
     Args:
-        message:    The user's question
-        session_id: UUID identifying the chat session (from frontend)
-        mode:       "student" or "professional"
+        message:          The user's question
+        session_id:       UUID identifying the chat session (from frontend)
+        mode:             "student" or "professional"
+        document_context: Optional extracted text from uploaded document
 
     Returns:
         dict with keys:
           - answer:      the LLM's response text
           - sources:     list of source dicts for citation display
-          - complexity:  "simple" or "complex" (for debugging/analytics)
+          - context:     assembled context string (for eval service)
+          - complexity:  "simple" or "complex"
           - tokens_used: total tokens consumed (for monitoring)
     """
     log.info(f"Chain invoked | session={session_id[:8]} | mode={mode}")
@@ -210,10 +216,8 @@ def run_chain(
 
     # ── Step 2: Route and retrieve ────────────────────────────────────────────
     if complexity == "simple":
-        # Direct single-query retrieval
         context, sources = retrieve(message)
     else:
-        # Decompose into sub-queries → RAG-Fusion
         sub_queries = decompose_query(message)
         log.info(f"Sub-queries: {sub_queries}")
         context, sources = retrieve_multi(sub_queries)
@@ -224,10 +228,10 @@ def run_chain(
         context=context,
         chat_history=chat_history,
         mode=mode,
+        document_context=document_context,
     )
 
     # ── Step 4: Save to memory ────────────────────────────────────────────────
-    # Store this turn so follow-up questions have context
     memory.save_context(
         inputs={"input": message},
         outputs={"answer": answer},
@@ -236,8 +240,9 @@ def run_chain(
     log.info(f"Response generated | tokens={tokens_used} | sources={len(sources)}")
 
     return {
-        "answer":     answer,
-        "sources":    sources,
-        "complexity": complexity,
+        "answer":      answer,
+        "sources":     sources,
+        "context":     context,   # returned for eval service faithfulness scoring
+        "complexity":  complexity,
         "tokens_used": tokens_used,
     }
