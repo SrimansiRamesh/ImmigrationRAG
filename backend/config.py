@@ -46,7 +46,7 @@ COHERE_RERANK_MODEL    = "rerank-english-v3.0"
 RETRIEVAL_TOP_K  = 20
 
 # How many chunks to keep after reranking and send to the LLM
-RERANK_TOP_N     = 5
+RERANK_TOP_N     = 7
 
 # Number of sub-queries to generate for complex questions
 MAX_SUB_QUERIES  = 3

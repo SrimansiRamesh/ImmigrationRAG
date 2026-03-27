@@ -1,4 +1,3 @@
-```markdown
 # CLAUDE.md — US Immigration RAG Application
 
 ## Project Overview
@@ -35,6 +34,7 @@ The application maintains **conversational awareness within a chat session** (no
 Immigration queries are specific and terminology-heavy. HyDE risks embedding hallucinated answers and retrieving wrong context.
 
 ### USE: RAG-Fusion + Query Decomposition (routed by complexity)
+
 ```
 
 User Query
@@ -57,6 +57,7 @@ and what happens during cap-gap?")
 ```
 
 **Why this approach:**
+
 - Immigration docs use inconsistent terminology (H-1B vs H1B vs specialty occupation)
 - Multi-query covers phrasing variations naturally
 - Decomposition handles complex multi-part questions (very common in immigration)
@@ -67,6 +68,7 @@ and what happens during cap-gap?")
 ## Data Sources (Knowledge Base)
 
 ### Primary (scrape/download for ingestion)
+
 - **uscis.gov** — Policy Manual (HTML), forms, processing times
 - **irs.gov** — Publication 519 (tax for nonresident aliens), 1040-NR instructions, tax treaty PDFs
 - **dol.gov** — H-1B LCA data, PERM labor conditions
@@ -74,10 +76,12 @@ and what happens during cap-gap?")
 - **congress.gov** — INA, IMMACT (immigration law text)
 
 ### Secondary (optional, adds Q&A coverage)
+
 - VisaJourney, Trackitt, Reddit r/immigration, r/h1b
 - Murthy Law, Immihelp FAQs
 
 ### Source Priority Hierarchy
+
 Official gov > Law firm content > Community/forum data
 
 ---
@@ -161,7 +165,7 @@ Official gov > Law firm content > Community/forum data
 │ Session-scoped: new browser tab = new chat = fresh history │
 └──────────────────────────────────────────────────────────────────┘
 
-````
+```
 
 ---
 
@@ -188,7 +192,7 @@ def get_memory(session_id: str) -> ConversationBufferWindowMemory:
             output_key="answer"
         )
     return session_store[session_id]
-````
+```
 
 Frontend sends `session_id` (UUID generated on page load) with every request. Follow-up questions like "What about for my spouse?" resolve correctly using chat history context.
 

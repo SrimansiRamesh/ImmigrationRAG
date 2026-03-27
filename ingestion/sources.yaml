@@ -103,3 +103,31 @@ sources:
     topic_tags: [visa_bulletin, priority_dates, green_card]
     jurisdiction: state_dept
     priority: 1
+
+  - name: USCIS Fee Schedule
+    urls:
+      - https://www.uscis.gov/forms/our-fees
+    type: html
+    doc_type: fee_schedule
+    topic_tags: [fees, h1b, i485, filing_fees]
+    jurisdiction: uscis
+    priority: 1
+
+  - name: USCIS Green Card Categories
+    urls:
+      - https://www.uscis.gov/green-card/green-card-eligibility/green-card-for-employment-based-immigrants
+    type: html
+    doc_type: policy_manual
+    topic_tags: [green_card, eb1, eb2, eb3]
+    jurisdiction: uscis
+    priority: 1
+
+  - name: DOL H1B Dependent Employer Rules
+    urls:
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62A.pdf
+      - https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/whdfs62B.pdf
+    type: pdf
+    doc_type: labor_condition
+    topic_tags: [h1b, employer_obligations, h1b_dependent]
+    jurisdiction: dol
+    priority: 1
