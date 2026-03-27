@@ -10,6 +10,7 @@ Usage:
 
 import io
 import logging
+import os
 import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,8 +30,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Eval service URL — runs on port 8001
-EVAL_SERVICE_URL = "http://localhost:8001/evaluate"
-
+EVAL_SERVICE_URL = os.getenv("EVAL_SERVICE_URL", "http://localhost:8001/evaluate")
 
 # ── Eval fire-and-forget ──────────────────────────────────────────────────────
 
