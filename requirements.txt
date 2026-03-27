@@ -35,3 +35,4 @@ google-generativeai==0.8.6
 google-genai==1.68.0
 httpx==0.28.1
 httpx-sse==0.4.0
+gunicorn==25.3.0
