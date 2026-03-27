@@ -1,0 +1,8 @@
+rag-immigration-env/
+frontend/node_modules/
+frontend/.next/
+data/
+eval/results/
+__pycache__/
+*.pyc
+.git/

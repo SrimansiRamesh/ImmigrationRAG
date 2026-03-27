@@ -1,0 +1,18 @@
+# Eval service — minimal, no ingestion or retrieval deps
+
+# API
+fastapi==0.115.6
+uvicorn==0.32.1
+gunicorn==25.3.0
+pydantic==2.8.2
+httpx==0.28.1
+
+# LLM (Gemini — for faithfulness + relevance scoring)
+google-generativeai==0.8.6
+google-genai==1.68.0
+
+# Embeddings (Azure OpenAI — for answer relevance cosine scoring)
+openai>=1.30.0
+
+# Utilities
+python-dotenv==1.0.1

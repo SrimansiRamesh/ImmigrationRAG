@@ -56,3 +56,8 @@ eval/results/
 *.swodata/embedded/
 test_azure.py
 test.py
+
+data/
+__pycache__/
+*.pyc
+.DS_Store

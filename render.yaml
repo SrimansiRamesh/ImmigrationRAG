@@ -2,19 +2,24 @@ services:
   - type: web
     name: immigrationiq-backend
     runtime: python
-    rootDir: .
+    rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.0
       - key: AZURE_OPENAI_ENDPOINT
         sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
+      - key: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+        sync: false
       - key: AZURE_OPENAI_API_VERSION
         sync: false
-      - key: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_CHAT_MODEL
+        sync: false
+      - key: GEMINI_CLASSIFIER_MODEL
         sync: false
       - key: QDRANT_URL
         sync: false
@@ -24,29 +29,24 @@ services:
         sync: false
       - key: COHERE_API_KEY
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_CHAT_MODEL
-        sync: false
-      - key: GEMINI_CLASSIFIER_MODEL
-        sync: false
+      - key: EVAL_SERVICE_URL
+        sync: false # Set AFTER eval service is deployed
 
   - type: web
     name: immigrationiq-eval
     runtime: python
-    rootDir: .
+    rootDir: eval
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn eval.service:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn service:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.0
       - key: AZURE_OPENAI_ENDPOINT
         sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
-      - key: AZURE_OPENAI_API_VERSION
-        sync: false
       - key: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+        sync: false
+      - key: AZURE_OPENAI_API_VERSION
         sync: false
       - key: GEMINI_API_KEY
         sync: false

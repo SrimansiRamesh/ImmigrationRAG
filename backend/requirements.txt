@@ -1,0 +1,33 @@
+# Vector DB
+qdrant-client==1.17.1
+
+# Embeddings + Azure OpenAI
+openai>=1.30.0
+
+# PDF parsing (document upload feature)
+pdfplumber==0.11.4
+
+# Backend
+fastapi==0.115.6
+uvicorn==0.32.1
+gunicorn==25.3.0
+pydantic==2.8.2
+python-multipart==0.0.20
+httpx==0.28.1
+httpx-sse==0.4.0
+
+# LangChain ecosystem
+langchain==0.3.7
+langchain-openai==0.2.9
+langchain-community==0.3.7
+langchain-qdrant==0.2.0
+
+# Reranker
+cohere==5.11.0
+
+# LLM (Gemini)
+google-generativeai==0.8.6
+google-genai==1.68.0
+
+# Utilities
+python-dotenv==1.0.1
