@@ -52,3 +52,10 @@ services:
         sync: false
       - key: GEMINI_CLASSIFIER_MODEL
         sync: false
+  - type: web
+    name: immigrationiq-eval
+    runtime: python
+    rootDir: eval
+    pythonVersion: "3.11.9" # add this line
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn service:app --host 0.0.0.0 --port $PORT
