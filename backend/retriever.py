@@ -25,7 +25,7 @@ from qdrant_client.models import (
     ScoredPoint,
     QueryResponse,
 )
-from backend.config import (
+from config import (
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_API_KEY,
     AZURE_OPENAI_API_VERSION,

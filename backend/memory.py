@@ -17,7 +17,7 @@ Why in-memory and not a database?
 
 import logging
 from langchain.memory import ConversationBufferWindowMemory
-from backend.config import MEMORY_K
+from config import MEMORY_K
 
 log = logging.getLogger(__name__)
 

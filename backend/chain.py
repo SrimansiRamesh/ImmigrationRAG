@@ -19,7 +19,7 @@ from google import genai
 from google.genai import types
 from typing import Optional
 
-from backend.config import (
+from config import (
     GEMINI_API_KEY,
     GEMINI_CHAT_MODEL,
     GEMINI_CLASSIFIER_MODEL,
@@ -27,13 +27,13 @@ from backend.config import (
     MAX_TOKENS,
     MAX_SUB_QUERIES,
 )
-from backend.prompts import (
+from prompts import (
     get_system_prompt,
     CLASSIFIER_PROMPT,
     DECOMPOSITION_PROMPT,
 )
-from backend.retriever import retrieve, retrieve_multi
-from backend.memory import get_memory
+from retriever import retrieve, retrieve_multi
+from memory import get_memory
 
 log = logging.getLogger(__name__)
 

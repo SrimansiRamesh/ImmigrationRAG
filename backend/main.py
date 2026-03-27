@@ -18,9 +18,9 @@ from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from backend.config import validate_config, GEMINI_API_KEY, GEMINI_CLASSIFIER_MODEL
-from backend.chain import run_chain
-from backend.memory import clear_memory, get_active_sessions
+from config import validate_config, GEMINI_API_KEY, GEMINI_CLASSIFIER_MODEL
+from chain import run_chain
+from memory import clear_memory, get_active_sessions
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
