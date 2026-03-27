@@ -11,7 +11,7 @@ pdfplumber==0.11.4
 fastapi==0.115.6
 uvicorn==0.32.1
 gunicorn==25.3.0
-pydantic==2.8.2
+pydantic>=2.9.0
 python-multipart==0.0.20
 httpx==0.28.1
 httpx-sse==0.4.0
