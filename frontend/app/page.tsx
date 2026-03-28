@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * page.tsx — ImmigrationIQ main chat interface.
- *
- * Three-panel layout:
- *   [QuestionNav 220px] | [Chat + Input flex-1] | [SourcesPanel 272px]
- *
- * Features:
- *   - Mode toggle (student ↔ professional)
- *   - Typewriter animation on assistant responses
- *   - Question nav: click any past question to scroll to its answer
- *   - Sources panel: opens on the right when "N sources" is clicked
- *   - Export chat as .md file
- *   - New chat clears state and backend session
- */
-
 import { useState, useCallback, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Message, Mode, Source, ParsedDocument, sendMessage, clearSession, parseDocument } from "@/lib/api";
@@ -26,35 +11,19 @@ import ColdStartOverlay from "@/components/ColdStartOverlay";
 
 const ACCEPTED_FILE_TYPES = ".txt,.md,.markdown,.pdf";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function exportChatAsMd(messages: Message[]): void {
   if (messages.length === 0) return;
-
-  const lines: string[] = [
-    "# ImmigrationIQ Chat Export",
-    `*Exported ${new Date().toLocaleString()}*`,
-    "",
-  ];
-
+  const lines: string[] = ["# ImmigrationIQ Chat Export", `*Exported ${new Date().toLocaleString()}*`, ""];
   for (const msg of messages) {
     const role = msg.role === "user" ? "**You**" : "**ImmigrationIQ**";
     lines.push(`### ${role}`);
     lines.push(msg.content.trim());
-
     if (msg.sources && msg.sources.length > 0) {
-      lines.push("");
-      lines.push("**Sources:**");
-      for (const s of msg.sources) {
-        const label = s.section || s.url;
-        lines.push(`- [${label}](${s.url})`);
-      }
+      lines.push("", "**Sources:**");
+      for (const s of msg.sources) lines.push(`- [${s.section || s.url}](${s.url})`);
     }
-    lines.push("");
-    lines.push("---");
-    lines.push("");
+    lines.push("", "---", "");
   }
-
   const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
@@ -72,19 +41,19 @@ function scrollToMessage(messageId: string): void {
   setTimeout(() => el.classList.remove("highlight-flash"), 2000);
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
 export default function Home() {
   const [messages,  setMessages]  = useState<Message[]>([]);
   const [mode,      setMode]      = useState<Mode>("student");
   const [input,     setInput]     = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Right panel state
   const [activeSources,  setActiveSources]  = useState<Source[]>([]);
-  // Document attached to the next message to be sent
   const [pendingDoc,     setPendingDoc]     = useState<ParsedDocument | null>(null);
   const [docLoading,     setDocLoading]     = useState(false);
+
+  // Mobile drawer/sheet state
+  const [navOpen,     setNavOpen]     = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const inputRef     = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -93,18 +62,14 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
-
     setDocLoading(true);
     try {
       const parsed = await parseDocument(file);
       setPendingDoc(parsed);
     } catch (err) {
-      console.error("Document parse failed:", err);
-      // Surface the error in chat as a system message
       setMessages(prev => [...prev, {
-        id:        crypto.randomUUID(),
-        role:      "assistant" as const,
-        content:   `Could not read the document: ${err instanceof Error ? err.message : "Unknown error"}`,
+        id: crypto.randomUUID(), role: "assistant" as const,
+        content: `Could not read the document: ${err instanceof Error ? err.message : "Unknown error"}`,
         timestamp: new Date(),
       }]);
     } finally {
@@ -112,71 +77,39 @@ export default function Home() {
     }
   };
 
-  // ── Send message ────────────────────────────────────────────────────────────
-  const handleSend = useCallback(
-    async (overrideText?: string) => {
-      const text = (overrideText ?? input).trim();
-      if (!text || isLoading) return;
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text || isLoading) return;
+    const sessionId = getSessionId();
+    const messageToSend = pendingDoc
+      ? `[Attached document: "${pendingDoc.filename}"${pendingDoc.summarised ? " (summarised)" : ""}]\n\n${pendingDoc.text}\n\n---\n\n${text}`
+      : text;
+    const userMsg: Message = {
+      id: uuidv4(), role: "user", content: text, timestamp: new Date(),
+      attachment: pendingDoc ? { filename: pendingDoc.filename, summarised: pendingDoc.summarised } : undefined,
+    };
+    setMessages(prev => [...prev, userMsg]);
+    if (!overrideText) setInput("");
+    setPendingDoc(null);
+    setIsLoading(true);
+    if (inputRef.current) inputRef.current.style.height = "auto";
+    try {
+      const response = await sendMessage(messageToSend, sessionId, mode);
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: "assistant", content: response.answer,
+        sources: response.sources, complexity: response.complexity, timestamp: new Date(),
+      }]);
+    } catch {
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: "assistant", timestamp: new Date(),
+        content: "Sorry, something went wrong. Please check that the backend server is running and try again.",
+      }]);
+    } finally {
+      setIsLoading(false);
+      inputRef.current?.focus();
+    }
+  }, [input, isLoading, mode, pendingDoc]);
 
-      const sessionId = getSessionId();
-
-      // If a document is attached, prepend it to this message only
-      const messageToSend = pendingDoc
-        ? `[Attached document: "${pendingDoc.filename}"${pendingDoc.summarised ? " (summarised)" : ""}]\n\n${pendingDoc.text}\n\n---\n\n${text}`
-        : text;
-
-      const userMsg: Message = {
-        id:         uuidv4(),
-        role:       "user",
-        content:    text,   // UI shows only the user's question
-        timestamp:  new Date(),
-        attachment: pendingDoc
-          ? { filename: pendingDoc.filename, summarised: pendingDoc.summarised }
-          : undefined,
-      };
-
-      setMessages((prev) => [...prev, userMsg]);
-      if (!overrideText) setInput("");
-      setPendingDoc(null);
-      setIsLoading(true);
-
-      // Auto-resize reset
-      if (inputRef.current) {
-        inputRef.current.style.height = "auto";
-      }
-
-      try {
-        const response = await sendMessage(messageToSend, sessionId, mode);
-
-        const assistantMsg: Message = {
-          id:         uuidv4(),
-          role:       "assistant",
-          content:    response.answer,
-          sources:    response.sources,
-          complexity: response.complexity,
-          timestamp:  new Date(),
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      } catch {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id:        uuidv4(),
-            role:      "assistant",
-            content:
-              "Sorry, something went wrong. Please check that the backend server is running and try again.",
-            timestamp: new Date(),
-          },
-        ]);
-      } finally {
-        setIsLoading(false);
-        inputRef.current?.focus();
-      }
-    },
-    [input, isLoading, mode]
-  );
-
-  // ── New chat ────────────────────────────────────────────────────────────────
   const handleNewChat = useCallback(async () => {
     const oldId = getSessionId();
     await clearSession(oldId);
@@ -185,16 +118,13 @@ export default function Home() {
     setInput("");
     setActiveSources([]);
     setPendingDoc(null);
+    setNavOpen(false);
     if (inputRef.current) inputRef.current.style.height = "auto";
     inputRef.current?.focus();
   }, []);
 
-  // ── Input handlers ──────────────────────────────────────────────────────────
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -203,40 +133,110 @@ export default function Home() {
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const handleViewSources = (sources: Source[]) => {
+    setActiveSources(sources);
+    setSourcesOpen(true);
+  };
+
   const showSourcesPanel = activeSources.length > 0;
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
       <ColdStartOverlay />
-      {/* ── Left sidebar: navigation ──────────────────────────────────────── */}
-      <div className="w-[260px] flex-shrink-0">
-        <QuestionNav
-          messages={messages}
-          mode={mode}
-          onModeChange={setMode}
-          onQuestionClick={scrollToMessage}
-          onNewChat={handleNewChat}
-          onExport={() => exportChatAsMd(messages)}
-          isLoading={isLoading}
+
+      {/* ── Mobile nav drawer backdrop ───────────────────────────────────── */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-30 md:hidden"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setNavOpen(false)}
         />
+      )}
+
+      {/* ── Left sidebar ─────────────────────────────────────────────────── */}
+      {/* Desktop: always visible. Mobile: slide-in drawer */}
+      <div
+        className="fixed md:relative z-40 md:z-auto h-full flex-shrink-0 transition-transform duration-300 ease-in-out"
+        style={{
+          width: "260px",
+          transform: navOpen ? "translateX(0)" : undefined,
+        }}
+      >
+        {/* On mobile, hide off-screen when closed */}
+        <div
+          className="h-full md:translate-x-0"
+          style={{
+            transform: typeof window !== "undefined" && window.innerWidth < 768 && !navOpen
+              ? "translateX(-100%)" : "translateX(0)",
+            transition: "transform 0.3s ease-in-out",
+          }}
+        >
+          <QuestionNav
+            messages={messages}
+            mode={mode}
+            onModeChange={setMode}
+            onQuestionClick={(id) => { scrollToMessage(id); setNavOpen(false); }}
+            onNewChat={handleNewChat}
+            onExport={() => exportChatAsMd(messages)}
+            isLoading={isLoading}
+          />
+        </div>
       </div>
 
       {/* ── Main chat column ──────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col min-w-0" style={{ borderLeft: "1px solid var(--border)" }}>
+      <main
+        className="flex-1 flex flex-col min-w-0"
+        style={{ borderLeft: "1px solid var(--border)" }}
+      >
+        {/* Mobile top header bar */}
+        <div
+          className="flex md:hidden items-center justify-between px-4 py-3 flex-shrink-0"
+          style={{ borderBottom: "1px solid var(--border-dim)", background: "var(--bg-surface)" }}
+        >
+          {/* Hamburger */}
+          <button
+            onClick={() => setNavOpen(v => !v)}
+            className="w-8 h-8 flex items-center justify-center rounded-md"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <div
+              className="w-6 h-6 rounded-md flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #1A3A72 0%, #0D2050 100%)", border: "1px solid #1E3A6E" }}
+            >
+              <span className="text-xs font-bold" style={{ color: "var(--accent)" }}>IQ</span>
+            </div>
+            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>ImmigrationIQ</span>
+          </div>
+
+          {/* Mode badge */}
+          <span
+            className="text-xs px-2 py-1 rounded-md capitalize"
+            style={{ background: "var(--bg-elevated)", color: "var(--accent)", border: "1px solid var(--border-dim)" }}
+          >
+            {mode}
+          </span>
+        </div>
+
         <ChatWindow
           messages={messages}
           isLoading={isLoading}
           onSuggestionClick={(text) => handleSend(text)}
-          onViewSources={(sources) => setActiveSources(sources)}
+          onViewSources={handleViewSources}
         />
 
         {/* Input area */}
         <div
-          className="flex-shrink-0 px-5 py-4"
+          className="flex-shrink-0 px-4 md:px-5 py-4"
           style={{ borderTop: "1px solid var(--border-dim)", background: "var(--bg-base)" }}
         >
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -246,7 +246,6 @@ export default function Home() {
           />
 
           <div className="max-w-2xl mx-auto">
-            {/* Pending doc badge */}
             {(pendingDoc || docLoading) && (
               <div
                 className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs w-fit"
@@ -257,37 +256,24 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
-                {docLoading
-                  ? <span>Parsing document…</span>
-                  : <>
-                      <span>
-                        {pendingDoc!.filename}
-                        {pendingDoc!.summarised && <span style={{ color: "var(--text-muted)" }}> · summarised</span>}
-                        <span style={{ color: "var(--text-muted)" }}> — will be sent with this message</span>
-                      </span>
-                      <button
-                        onClick={() => setPendingDoc(null)}
-                        style={{ color: "var(--text-muted)" }}
-                        onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")}
-                        onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
-                      >✕</button>
-                    </>
-                }
+                {docLoading ? <span>Parsing document…</span> : (
+                  <>
+                    <span>
+                      {pendingDoc!.filename}
+                      {pendingDoc!.summarised && <span style={{ color: "var(--text-muted)" }}> · summarised</span>}
+                      <span style={{ color: "var(--text-muted)" }}> — will be sent with this message</span>
+                    </span>
+                    <button onClick={() => setPendingDoc(null)} style={{ color: "var(--text-muted)" }}>✕</button>
+                  </>
+                )}
               </div>
             )}
 
             <div
               className="flex items-end gap-2 rounded-2xl px-4 py-2 transition-colors"
-              style={{
-                background: "var(--bg-input)",
-                border: "1px solid var(--border)",
-              }}
-              onFocusCapture={(e) =>
-                ((e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent)")
-              }
-              onBlurCapture={(e) =>
-                ((e.currentTarget as HTMLDivElement).style.borderColor = "var(--border)")
-              }
+              style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}
+              onFocusCapture={e => (e.currentTarget.style.borderColor = "var(--accent)")}
+              onBlurCapture={e => (e.currentTarget.style.borderColor = "var(--border)")}
             >
               <textarea
                 ref={inputRef}
@@ -298,51 +284,30 @@ export default function Home() {
                 disabled={isLoading}
                 rows={1}
                 className="flex-1 bg-transparent text-sm resize-none outline-none py-1.5 disabled:opacity-50"
-                style={{
-                  color: "var(--text-primary)",
-                  caretColor: "var(--accent)",
-                  maxHeight: "160px",
-                  lineHeight: "1.5",
-                }}
+                style={{ color: "var(--text-primary)", caretColor: "var(--accent)", maxHeight: "160px", lineHeight: "1.5" }}
               />
-              {/* Attach document */}
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || docLoading}
-                title="Attach a document to this message (PDF, txt, md)"
+                title="Attach a document"
                 className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-colors mb-0.5 disabled:opacity-25"
                 style={{ color: "var(--text-muted)" }}
-                onMouseEnter={(e) => {
-                  if (!isLoading && !docLoading)
-                    (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
-                }}
+                onMouseEnter={e => { if (!isLoading && !docLoading) (e.currentTarget).style.color = "var(--accent)"; }}
+                onMouseLeave={e => { (e.currentTarget).style.color = "var(--text-muted)"; }}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
                     d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
               </button>
-
-              {/* Send */}
               <button
                 onClick={() => handleSend()}
                 disabled={isLoading || !input.trim()}
                 className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 mb-0.5 disabled:opacity-30"
                 style={{ background: "var(--accent)" }}
-                onMouseEnter={(e) => {
-                  if (!isLoading && input.trim())
-                    (e.currentTarget as HTMLButtonElement).style.opacity = "0.85";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.opacity = "1";
-                }}
               >
                 <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2}
-                    d="M5 12h14M12 5l7 7-7 7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 12h14M12 5l7 7-7 7" />
                 </svg>
               </button>
             </div>
@@ -354,9 +319,39 @@ export default function Home() {
         </div>
       </main>
 
-      {/* ── Right panel: sources (slides in) ──────────────────────────────── */}
+      {/* ── Sources panel ─────────────────────────────────────────────────── */}
+      {/* Desktop: slide in from right. Mobile: bottom sheet */}
+
+      {/* Mobile bottom sheet backdrop */}
+      {sourcesOpen && (
+        <div
+          className="fixed inset-0 z-30 md:hidden"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => { setSourcesOpen(false); setActiveSources([]); }}
+        />
+      )}
+
+      {/* Mobile bottom sheet */}
       <div
-        className="flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out"
+        className="fixed bottom-0 left-0 right-0 z-40 md:hidden rounded-t-2xl overflow-hidden transition-transform duration-300"
+        style={{
+          transform: sourcesOpen ? "translateY(0)" : "translateY(100%)",
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)",
+          maxHeight: "70vh",
+        }}
+      >
+        {showSourcesPanel && sourcesOpen && (
+          <SourcesPanel
+            sources={activeSources}
+            onClose={() => { setSourcesOpen(false); setActiveSources([]); }}
+          />
+        )}
+      </div>
+
+      {/* Desktop right panel */}
+      <div
+        className="hidden md:block flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out"
         style={{ width: showSourcesPanel ? "272px" : "0px", opacity: showSourcesPanel ? 1 : 0 }}
       >
         {showSourcesPanel && (
