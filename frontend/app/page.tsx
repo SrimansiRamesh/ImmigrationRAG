@@ -22,6 +22,7 @@ import { getSessionId, resetSession } from "@/lib/session";
 import ChatWindow from "@/components/ChatWindow";
 import QuestionNav from "@/components/QuestionNav";
 import SourcesPanel from "@/components/SourcesPanel";
+import ColdStartOverlay from "@/components/ColdStartOverlay";
 
 const ACCEPTED_FILE_TYPES = ".txt,.md,.markdown,.pdf";
 
@@ -207,7 +208,7 @@ export default function Home() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
-
+      <ColdStartOverlay />
       {/* ── Left sidebar: navigation ──────────────────────────────────────── */}
       <div className="w-[260px] flex-shrink-0">
         <QuestionNav
