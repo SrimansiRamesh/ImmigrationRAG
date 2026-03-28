@@ -154,33 +154,38 @@ export default function Home() {
       )}
 
       {/* ── Left sidebar ─────────────────────────────────────────────────── */}
-      {/* Desktop: always visible. Mobile: slide-in drawer */}
+      {/* Desktop: always visible as normal flow element                   */}
+      {/* Mobile: fixed overlay, slides in from left when navOpen          */}
+      <div className="hidden md:flex md:flex-shrink-0" style={{ width: "260px" }}>
+        <QuestionNav
+          messages={messages}
+          mode={mode}
+          onModeChange={setMode}
+          onQuestionClick={scrollToMessage}
+          onNewChat={handleNewChat}
+          onExport={() => exportChatAsMd(messages)}
+          isLoading={isLoading}
+        />
+      </div>
+
+      {/* Mobile drawer */}
       <div
-        className="fixed md:relative z-40 md:z-auto h-full flex-shrink-0 transition-transform duration-300 ease-in-out"
+        className="md:hidden fixed z-40 h-full transition-transform duration-300 ease-in-out"
         style={{
           width: "260px",
-          transform: navOpen ? "translateX(0)" : undefined,
+          transform: navOpen ? "translateX(0)" : "translateX(-100%)",
         }}
       >
-        {/* On mobile, hide off-screen when closed */}
-        <div
-          className="h-full md:translate-x-0"
-          style={{
-            transform: typeof window !== "undefined" && window.innerWidth < 768 && !navOpen
-              ? "translateX(-100%)" : "translateX(0)",
-            transition: "transform 0.3s ease-in-out",
-          }}
-        >
-          <QuestionNav
-            messages={messages}
-            mode={mode}
-            onModeChange={setMode}
-            onQuestionClick={(id) => { scrollToMessage(id); setNavOpen(false); }}
-            onNewChat={handleNewChat}
-            onExport={() => exportChatAsMd(messages)}
-            isLoading={isLoading}
-          />
-        </div>
+        <QuestionNav
+          messages={messages}
+          mode={mode}
+          onModeChange={setMode}
+          onQuestionClick={(id) => { scrollToMessage(id); setNavOpen(false); }}
+          onNewChat={handleNewChat}
+          onExport={() => exportChatAsMd(messages)}
+          isLoading={isLoading}
+          onClose={() => setNavOpen(false)}
+        />
       </div>
 
       {/* ── Main chat column ──────────────────────────────────────────────── */}
@@ -216,13 +221,23 @@ export default function Home() {
             <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>ImmigrationIQ</span>
           </div>
 
-          {/* Mode badge */}
-          <span
-            className="text-xs px-2 py-1 rounded-md capitalize"
-            style={{ background: "var(--bg-elevated)", color: "var(--accent)", border: "1px solid var(--border-dim)" }}
-          >
-            {mode}
-          </span>
+          {/* Mode toggle */}
+          <div className="flex rounded-lg p-0.5" style={{ background: "var(--bg-elevated)" }}>
+            {(["student", "professional"] as Mode[]).map(m => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                disabled={isLoading}
+                className="py-1 px-2.5 rounded-md text-xs font-medium transition-all duration-200 capitalize disabled:opacity-50"
+                style={mode === m
+                  ? { background: "var(--bg-surface)", color: "var(--accent)", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }
+                  : { color: "var(--text-secondary)" }
+                }
+              >
+                {m}
+              </button>
+            ))}
+          </div>
         </div>
 
         <ChatWindow
