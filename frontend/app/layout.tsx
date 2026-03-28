@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Playfair_Display, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -17,6 +17,12 @@ const ibmPlex = IBM_Plex_Sans({
 export const metadata: Metadata = {
   title: "ImmigrationIQ — US Immigration Assistant",
   description: "RAG-powered US immigration and tax guidance assistant",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({

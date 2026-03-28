@@ -17,7 +17,6 @@ export default function MessageBubble({ message, isLatest, onViewSources }: Mess
     return (
       <div className="flex justify-end px-5 py-2">
         <div className="max-w-[72%] flex flex-col items-end gap-1.5">
-          {/* Attachment badge */}
           {message.attachment && (
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
@@ -34,7 +33,7 @@ export default function MessageBubble({ message, isLatest, onViewSources }: Mess
           )}
           <div
             className="rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed"
-            style={{ background: "var(--user-bg)", color: "var(--user-text)" }}
+            style={{ background: "var(--user-bg)", color: "var(--user-text)", overflowWrap: "break-word", wordBreak: "break-word" }}
           >
             <p className="whitespace-pre-wrap">{message.content}</p>
           </div>
@@ -58,20 +57,24 @@ export default function MessageBubble({ message, isLatest, onViewSources }: Mess
         </span>
       </div>
 
-      <div className="max-w-[80%] min-w-0">
+      <div className="min-w-0 flex-1">
         <div
           className="rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
           style={{
             background: "var(--bg-elevated)",
             border: "1px solid var(--border-dim)",
             color: "var(--text-primary)",
+            overflowWrap: "break-word",
+            wordBreak: "break-word",
           }}
         >
           {isLatest ? (
             <TypewriterText text={message.content} speed={10} />
           ) : (
-            <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:text-[var(--text-primary)] prose-strong:text-[var(--text-primary)] prose-a:text-[var(--accent)] prose-code:text-[var(--accent)] prose-li:my-0.5"
-              style={{ color: "var(--text-primary)" }}>
+            <div
+              className="prose prose-sm max-w-none prose-p:my-1 prose-headings:text-[var(--text-primary)] prose-strong:text-[var(--text-primary)] prose-a:text-[var(--accent)] prose-code:text-[var(--accent)] prose-li:my-0.5"
+              style={{ color: "var(--text-primary)", overflowWrap: "break-word", wordBreak: "break-word" }}
+            >
               <ReactMarkdown>{message.content}</ReactMarkdown>
             </div>
           )}

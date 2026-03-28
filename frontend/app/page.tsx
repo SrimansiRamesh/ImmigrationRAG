@@ -299,7 +299,7 @@ export default function Home() {
                 disabled={isLoading}
                 rows={1}
                 className="flex-1 bg-transparent text-sm resize-none outline-none py-1.5 disabled:opacity-50"
-                style={{ color: "var(--text-primary)", caretColor: "var(--accent)", maxHeight: "160px", lineHeight: "1.5" }}
+                style={{ fontSize: "16px", color: "var(--text-primary)", caretColor: "var(--accent)", maxHeight: "160px", lineHeight: "1.5" }}
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -354,6 +354,9 @@ export default function Home() {
           background: "var(--bg-surface)",
           border: "1px solid var(--border)",
           maxHeight: "70vh",
+          height: "70vh",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         {showSourcesPanel && sourcesOpen && (
