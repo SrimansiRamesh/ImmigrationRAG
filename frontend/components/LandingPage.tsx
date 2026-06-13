@@ -26,7 +26,7 @@ export default function LandingPage({ onContinueAnon }: { onContinueAnon: () => 
   return (
     <div
       className="h-screen w-full flex flex-col items-center justify-center px-6"
-      style={{ background: "#F7F6F2" }}
+      style={{ height: "100dvh", background: "#F7F6F2" }}
     >
       {/* Logo mark */}
       <div

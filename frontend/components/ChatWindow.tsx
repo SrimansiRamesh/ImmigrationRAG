@@ -108,7 +108,7 @@ export default function ChatWindow({
 
   // ── Message list ─────────────────────────────────────────────────────────────
   return (
-    <div className="flex-1 overflow-y-auto py-4">
+    <div className="flex-1 overflow-y-auto py-4 max-md:min-h-0">
       {messages.map((msg) => (
         <div key={msg.id} id={`msg-${msg.id}`}>
           <MessageBubble

@@ -312,7 +312,7 @@ export default function Home() {
   // Wait for the initial session check before deciding what to show (avoids
   // a landing-page flash for already-signed-in users).
   if (!authReady) {
-    return <div className="h-screen" style={{ background: "var(--iq-bg)" }} />;
+    return <div className="h-screen" style={{ height: "100dvh", background: "var(--iq-bg)" }} />;
   }
 
   // Unauthenticated → sign-in landing page, unless the user chose to
@@ -326,7 +326,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden iq-fade-in" style={{ background: "var(--iq-bg)" }}>
+    <div className="flex h-screen overflow-hidden iq-fade-in" style={{ height: "100dvh", background: "var(--iq-bg)" }}>
       <ColdStartOverlay />
 
       {/* ── Mobile nav drawer backdrop ───────────────────────────────────── */}
@@ -390,7 +390,7 @@ export default function Home() {
 
       {/* ── Main chat column ──────────────────────────────────────────────── */}
       <main
-        className="flex-1 flex flex-col min-w-0"
+        className="flex-1 flex flex-col min-w-0 max-md:min-h-0"
         style={{ borderLeft: "1px solid var(--iq-border)" }}
       >
         {/* Mobile top header bar */}

@@ -31,21 +31,37 @@ export default function ColdStartOverlay() {
 
   useEffect(() => {
   let elapsed = 0;
+  let done    = false;
   let interval: ReturnType<typeof setInterval>;
 
   const dismiss = () => {
+    if (done) return;
+    done = true;
     clearInterval(interval);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("focus", onVisible);
     setProgress(100);
     setFadeOut(true);
     setTimeout(() => setVisible(false), 600);
   };
 
+  // Re-check immediately when the tab becomes visible/focused. Browsers like
+  // Arc prerender tabs and throttle background timers, so the polling interval
+  // can stall while hidden — by the time the user opens the tab the backend may
+  // already be awake. This catches that case without waiting for the next tick.
+  const onVisible = async () => {
+    if (done || document.visibilityState !== "visible") return;
+    if (await checkHealth()) dismiss();
+  };
+
   checkHealth().then(healthy => {
-    if (healthy) {
+    if (healthy || done) {
       return;
     }
 
     setVisible(true);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
 
     // Backend is cold — start polling
     interval = setInterval(async () => {
@@ -65,7 +81,12 @@ export default function ColdStartOverlay() {
     }, POLL_INTERVAL);
   });
 
-  return () => clearInterval(interval); // cleanup lives here, on the useEffect directly
+  return () => {
+    done = true;
+    clearInterval(interval);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("focus", onVisible);
+  };
 }, []);
 
   if (!visible) return null;
