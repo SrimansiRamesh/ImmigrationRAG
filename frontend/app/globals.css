@@ -2,32 +2,56 @@
 @plugin "@tailwindcss/typography";
 
 :root {
-  --font-display: var(--font-playfair), "Playfair Display", serif;
-  --font-body: var(--font-ibm-plex), "IBM Plex Sans", system-ui, sans-serif;
+  /* ── Fonts ──────────────────────────────────────────────────────────── */
+  --font-display: var(--font-dm-serif), "DM Serif Display", Georgia, serif;
+  --font-body: var(--font-inter), "Inter", system-ui, sans-serif;
 
-  --bg-base:     #070B16;
-  --bg-surface:  #0B1323;
-  --bg-elevated: #101D30;
-  --bg-input:    #0D1829;
-  --border:      #182338;
-  --border-dim:  #101B2E;
+  /* ── ImmigrationIQ design tokens (light "Federal Parchment" theme) ───── */
+  --iq-bg:         #F7F6F2;
+  --iq-surface:    #EDEAE0;
+  --iq-surface-2:  #D9D6CC;
+  --iq-white:      #FFFFFF;
+  --iq-teal:       #0F6B6B;
+  --iq-teal-light: #E1F5EE;
+  --iq-teal-mid:   #1D9E75;
+  --iq-teal-dark:  #0F6E56;
+  --iq-ink:        #1A1A2E;
+  --iq-muted:      #6B6860;
+  --iq-hint:       #9E9B93;
+  --iq-border:     #D9D6CC;
 
-  --accent:      #C4893A;
-  --accent-glow: rgba(196, 137, 58, 0.12);
+  /* Agency tag palettes */
+  --iq-blue-light:  #E5EEFB;
+  --iq-blue-dark:   #1E4FA3;
+  --iq-amber-light: #FBF1DD;
+  --iq-amber-dark:  #8A5A12;
 
-  --text-primary:   #D8E3F5;
-  --text-secondary: #6B7F9E;
-  --text-muted:     #3A4D68;
+  /* ── Legacy semantic aliases ─────────────────────────────────────────── */
+  /* Kept so components left as-is (LoadingIndicator, TypewriterText, prose) */
+  /* inherit the new palette without edits.                                 */
+  --bg-base:     var(--iq-bg);
+  --bg-surface:  var(--iq-surface);
+  --bg-elevated: var(--iq-white);
+  --bg-input:    var(--iq-white);
+  --border:      var(--iq-border);
+  --border-dim:  #E4E1D7;
 
-  --user-bg:   #1A3460;
-  --user-text: #AAC3EF;
+  --accent:      var(--iq-teal);
+  --accent-glow: rgba(15, 107, 107, 0.10);
+
+  --text-primary:   var(--iq-ink);
+  --text-secondary: var(--iq-muted);
+  --text-muted:     var(--iq-hint);
+
+  --user-bg:   var(--iq-teal);
+  --user-text: #FFFFFF;
 }
 
 * { box-sizing: border-box; }
 
 body {
-  background: var(--bg-base);
-  color: var(--text-primary);
+  background: var(--iq-bg);
+  color: var(--iq-ink);
   font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.65;
@@ -40,20 +64,20 @@ body {
 }
 
 /* Slim custom scrollbar */
-::-webkit-scrollbar       { width: 3px; height: 3px; }
+::-webkit-scrollbar       { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #1C2E4A; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #253E61; }
+::-webkit-scrollbar-thumb { background: var(--iq-surface-2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #C7C3B7; }
 
 /* Message highlight flash when navigating from sidebar */
 @keyframes highlight-flash {
-  0%   { background-color: rgba(196, 137, 58, 0.18); }
-  60%  { background-color: rgba(196, 137, 58, 0.06); }
+  0%   { background-color: rgba(15, 107, 107, 0.12); }
+  60%  { background-color: rgba(15, 107, 107, 0.05); }
   100% { background-color: transparent; }
 }
 .highlight-flash {
   animation: highlight-flash 2s ease-out;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 /* Blinking cursor for typewriter */
@@ -65,7 +89,7 @@ body {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--text-secondary);
+  background: var(--iq-teal);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: blink 1s step-end infinite;
@@ -78,3 +102,10 @@ body {
 }
 
 html { scroll-behavior: smooth; }
+
+/* Fade used when transitioning between landing page and chat on auth change */
+@keyframes iq-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.iq-fade-in { animation: iq-fade-in 0.3s ease; }

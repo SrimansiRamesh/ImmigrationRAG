@@ -22,10 +22,11 @@ AZURE_OPENAI_ENDPOINT    = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY     = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
 
-# Generation model (Phase 2) — using Gemini via Google AI
-GEMINI_API_KEY           = os.getenv("GEMINI_API_KEY")
-GEMINI_CHAT_MODEL        = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
-GEMINI_CLASSIFIER_MODEL  = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
+# Generation model — Azure OpenAI chat deployment
+AZURE_OPENAI_CHAT_ENDPOINT    = os.getenv("AZURE_OPENAI_CHAT_ENDPOINT")
+AZURE_OPENAI_CHAT_API_KEY     = os.getenv("AZURE_OPENAI_CHAT_API_KEY")
+AZURE_OPENAI_CHAT_DEPLOYMENT  = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+AZURE_OPENAI_CHAT_API_VERSION = os.getenv("AZURE_OPENAI_CHAT_API_VERSION", "2024-08-01-preview")
 
 # Embedding model (used in retriever to embed queries)
 AZURE_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
@@ -46,7 +47,7 @@ COHERE_RERANK_MODEL    = "rerank-english-v3.0"
 RETRIEVAL_TOP_K  = 20
 
 # How many chunks to keep after reranking and send to the LLM
-RERANK_TOP_N     = 7
+RERANK_TOP_N     = 5
 
 # Number of sub-queries to generate for complex questions
 MAX_SUB_QUERIES  = 3
@@ -69,12 +70,14 @@ def validate_config() -> None:
     Called once at server startup — fails fast before any requests are served.
     """
     required = {
-        "AZURE_OPENAI_ENDPOINT":    AZURE_OPENAI_ENDPOINT,
-        "AZURE_OPENAI_API_KEY":     AZURE_OPENAI_API_KEY,
-        "QDRANT_URL":               QDRANT_URL,
-        "QDRANT_API_KEY":           QDRANT_API_KEY,
-        "COHERE_API_KEY":           COHERE_API_KEY,
-        "GEMINI_API_KEY":           GEMINI_API_KEY,
+        "AZURE_OPENAI_ENDPOINT":         AZURE_OPENAI_ENDPOINT,
+        "AZURE_OPENAI_API_KEY":          AZURE_OPENAI_API_KEY,
+        "AZURE_OPENAI_CHAT_ENDPOINT":    AZURE_OPENAI_CHAT_ENDPOINT,
+        "AZURE_OPENAI_CHAT_API_KEY":     AZURE_OPENAI_CHAT_API_KEY,
+        "AZURE_OPENAI_CHAT_DEPLOYMENT":  AZURE_OPENAI_CHAT_DEPLOYMENT,
+        "QDRANT_URL":                    QDRANT_URL,
+        "QDRANT_API_KEY":                QDRANT_API_KEY,
+        "COHERE_API_KEY":                COHERE_API_KEY,
     }
     missing = [k for k, v in required.items() if not v]
     if missing:

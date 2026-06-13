@@ -1,17 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Playfair_Display, IBM_Plex_Sans } from "next/font/google";
+import { DM_Serif_Display, Inter } from "next/font/google";
 import "./globals.css";
 
-const playfair = Playfair_Display({
+const dmSerif = DM_Serif_Display({
   subsets: ["latin"],
-  weight: ["400", "600", "700"],
-  variable: "--font-playfair",
+  weight: ["400"],
+  variable: "--font-dm-serif",
 });
 
-const ibmPlex = IBM_Plex_Sans({
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-  variable: "--font-ibm-plex",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
@@ -33,8 +33,15 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${playfair.variable} ${ibmPlex.variable} h-full`}
+      className={`${dmSerif.variable} ${inter.variable} h-full`}
     >
+      <head>
+        {/* Tabler icon webfont — enables <i className="ti ti-NAME" /> */}
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css"
+        />
+      </head>
       <body className="h-full overflow-hidden">{children}</body>
     </html>
   );

@@ -24,47 +24,49 @@ const MAX_WAIT        = 120000; // 2 min max before we give up and hide anyway
 const PROGRESS_STEP   = 100 / (MAX_WAIT / POLL_INTERVAL); // % per poll tick
 
 export default function ColdStartOverlay() {
-  const [visible,   setVisible]   = useState(true);
+  const [visible,   setVisible]   = useState(false);
   const [fadeOut,   setFadeOut]   = useState(false);
   const [progress,  setProgress]  = useState(0);
   const [msgIdx,    setMsgIdx]    = useState(0);
 
   useEffect(() => {
-    let elapsed  = 0;
-    let interval: ReturnType<typeof setInterval>;
+  let elapsed = 0;
+  let interval: ReturnType<typeof setInterval>;
 
-    const dismiss = () => {
-      clearInterval(interval);
-      setProgress(100);
-      setFadeOut(true);
-      setTimeout(() => setVisible(false), 600); // matches fade-out duration
-    };
+  const dismiss = () => {
+    clearInterval(interval);
+    setProgress(100);
+    setFadeOut(true);
+    setTimeout(() => setVisible(false), 600);
+  };
 
+  checkHealth().then(healthy => {
+    if (healthy) {
+      return;
+    }
+
+    setVisible(true);
+
+    // Backend is cold — start polling
     interval = setInterval(async () => {
       elapsed += POLL_INTERVAL;
-
-      // Advance progress bar and rotate message
-      setProgress(p => Math.min(p + PROGRESS_STEP, 95)); // cap at 95 until confirmed ready
+      setProgress(p => Math.min(p + PROGRESS_STEP, 95));
       setMsgIdx(prev => Math.min(prev + 1, MESSAGES.length - 1));
 
-      // Check if backend is awake
       const healthy = await checkHealth();
       if (healthy) {
         dismiss();
         return;
       }
 
-      // Give up after MAX_WAIT
       if (elapsed >= MAX_WAIT) {
         dismiss();
       }
     }, POLL_INTERVAL);
+  });
 
-    // Also check immediately on mount (might already be warm)
-    checkHealth().then(healthy => { if (healthy) dismiss(); });
-
-    return () => clearInterval(interval);
-  }, []);
+  return () => clearInterval(interval); // cleanup lives here, on the useEffect directly
+}, []);
 
   if (!visible) return null;
 
@@ -81,19 +83,16 @@ export default function ColdStartOverlay() {
       {/* Logo */}
       <div
         className="w-14 h-14 rounded-xl flex items-center justify-center mb-6"
-        style={{
-          background: "linear-gradient(135deg, #1A3A72 0%, #0D2050 100%)",
-          border:     "1px solid #1E3A6E",
-        }}
+        style={{ background: "var(--iq-teal)" }}
       >
-        <span className="text-lg font-bold tracking-wider" style={{ color: "var(--accent)" }}>
+        <span className="font-display text-lg leading-none" style={{ color: "#fff" }}>
           IQ
         </span>
       </div>
 
       <h1
-        className="text-xl font-semibold mb-1"
-        style={{ color: "var(--text-primary)", fontFamily: "var(--font-heading, serif)" }}
+        className="font-display text-xl mb-1"
+        style={{ color: "var(--text-primary)" }}
       >
         ImmigrationIQ
       </h1>
@@ -129,10 +128,6 @@ export default function ColdStartOverlay() {
           }}
         />
       </div>
-
-      <p className="text-xs mt-4" style={{ color: "var(--text-muted)" }}>
-        Free server waking from sleep — usually under 2 minutes
-      </p>
     </div>
   );
 }

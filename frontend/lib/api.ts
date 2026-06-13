@@ -12,6 +12,7 @@
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const EVAL_BASE = process.env.NEXT_PUBLIC_EVAL_URL || "http://localhost:8001";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -25,11 +26,19 @@ export interface Source {
   effective_date: number | null;
 }
 
+export interface EvalScores {
+  faithfulness:      number;
+  answer_relevance:  number;
+  context_precision: number;
+  overall:           number;
+}
+
 export interface ChatResponse {
   answer:      string;
   sources:     Source[];
   complexity:  string;
   tokens_used: number;
+  eval_id:     string | null;
 }
 
 export interface Message {
@@ -38,6 +47,8 @@ export interface Message {
   content:     string;
   sources?:    Source[];
   complexity?: string;
+  scores?:     EvalScores;
+  animate?:    boolean;   // true → typewriter animate; false/undefined → static
   timestamp:   Date;
   attachment?: { filename: string; summarised: boolean };
 }
@@ -59,6 +70,7 @@ export async function sendMessage(
   sessionId: string,
   mode:      Mode
 ): Promise<ChatResponse> {
+  console.log("calling sendMessage", { message, sessionId, mode }); // TEMP debug
   const res = await fetch(`${API_BASE}/api/chat`, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
@@ -120,8 +132,25 @@ export async function checkHealth(): Promise<boolean> {
     const res = await fetch(`${API_BASE}/health`, {
       signal: AbortSignal.timeout(3000), // 3 second timeout
     });
+    console.log("Health check response:", res);
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Poll the eval service for a single response's quality scores.
+ * Returns null while scores aren't ready yet (404) or on any error —
+ * the caller decides how many times to retry.
+ */
+export async function pollEvalScore(evalId: string): Promise<EvalScores | null> {
+  try {
+    const res = await fetch(`${EVAL_BASE}/result/${evalId}`);
+    if (res.status === 404) return null; // not ready yet
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
   }
 }

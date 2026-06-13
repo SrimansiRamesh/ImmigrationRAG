@@ -53,11 +53,16 @@ eval/results/
 .vscode/
 .idea/
 *.swp
-*.swodata/embedded/
+*.swo
 test_azure.py
 test.py
 
 data/
+data/embedded/
 __pycache__/
 *.pyc
 .DS_Store
+
+# ── Markdown docs (keep only README files; ignore all other .md) ─────────────
+*.md
+!README.md

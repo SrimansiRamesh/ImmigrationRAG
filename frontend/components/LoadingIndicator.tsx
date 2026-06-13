@@ -51,13 +51,10 @@ export default function LoadingIndicator({ complexity = "simple" }: Props) {
     <div className="flex items-start gap-3 px-5 py-3">
       {/* Avatar */}
       <div
-        className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
-        style={{
-          background: "linear-gradient(135deg, #1A3A72 0%, #0D2050 100%)",
-          border: "1px solid #1E3A6E",
-        }}
+        className="flex items-center justify-center flex-shrink-0 mt-0.5"
+        style={{ width: 30, height: 30, background: "#0F6B6B", borderRadius: 7 }}
       >
-        <span className="text-xs font-bold tracking-wider" style={{ color: "var(--accent)" }}>
+        <span className="font-display leading-none" style={{ color: "#E1F5EE", fontSize: 12 }}>
           IQ
         </span>
       </div>

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import ReactMarkdown from "react-markdown";
+import MarkdownWithCitations from "./MarkdownWithCitations";
 
 interface TypewriterTextProps {
   text:        string;
   speed?:      number;
   onComplete?: () => void;
+  onCiteClick?: (index: number) => void;
 }
 
 /** Strip markdown syntax so plain text looks clean during animation */
@@ -19,6 +20,7 @@ function stripMarkdown(text: string): string {
     .replace(/^\s*[-*+]\s/gm, "• ")      // unordered bullets
     .replace(/^\s*\d+\.\s/gm, "")        // ordered list numbers
     .replace(/\[(.+?)\]\(.+?\)/g, "$1")  // links → label only
+    .replace(/\[\d+\]/g, "")             // inline citation markers (shown as badges once complete)
     .replace(/\n{3,}/g, "\n\n");         // excess blank lines
 }
 
@@ -26,6 +28,7 @@ export default function TypewriterText({
   text,
   speed = 10,
   onComplete,
+  onCiteClick,
 }: TypewriterTextProps) {
   const [displayed,   setDisplayed]   = useState("");
   const [isComplete,  setIsComplete]  = useState(false);
@@ -67,12 +70,12 @@ export default function TypewriterText({
   return (
     <div>
       {isComplete ? (
-        <div
+        <MarkdownWithCitations
+          content={text}
+          onCiteClick={onCiteClick}
           className="prose prose-sm max-w-none prose-p:my-1 prose-headings:text-[var(--text-primary)] prose-strong:text-[var(--text-primary)] prose-a:text-[var(--accent)] prose-code:text-[var(--accent)] prose-li:my-0.5"
           style={{ color: "var(--text-primary)" }}
-        >
-          <ReactMarkdown>{text}</ReactMarkdown>
-        </div>
+        />
       ) : (
         <div className="whitespace-pre-wrap">
           {stripMarkdown(displayed)}

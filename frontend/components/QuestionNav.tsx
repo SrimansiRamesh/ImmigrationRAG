@@ -1,170 +1,328 @@
 "use client";
 
+import { useState, useRef } from "react";
 import { Message, Mode } from "@/lib/api";
+import { Conversation } from "@/lib/conversations";
+import AuthButton from "./AuthButton";
 
 interface QuestionNavProps {
-  messages:        Message[];
-  mode:            Mode;
-  onModeChange:    (m: Mode) => void;
-  onQuestionClick: (id: string) => void;
-  onNewChat:       () => void;
-  onExport:        () => void;
-  isLoading:       boolean;
-  onClose?:        () => void; // mobile only
+  messages:             Message[];
+  mode:                 Mode;
+  onModeChange:         (m: Mode) => void;
+  onNewChat:            () => void;
+  onExport:             () => void;
+  isLoading:            boolean;
+  onClose?:             () => void; // mobile only
+  userId:               string | null;
+  conversations:        Conversation[];
+  activeConversationId: string | null;
+  onSelectConversation: (id: string) => void;
+  onRename:             (id: string, newTitle: string) => void;
+  onDelete:             (id: string) => void;
+  collapsed?:           boolean;       // desktop-only collapse state
+  onToggleCollapse?:    () => void;    // present only on the desktop instance
 }
 
+const MODES: { key: Mode; label: string; icon: string }[] = [
+  { key: "student",      label: "Student", icon: "ti-school" },
+  { key: "professional", label: "Pro",     icon: "ti-briefcase" },
+];
+
 export default function QuestionNav({
-  messages, mode, onModeChange, onQuestionClick,
-  onNewChat, onExport, isLoading, onClose,
+  messages, mode, onModeChange, onNewChat, onExport, isLoading, onClose,
+  userId, conversations, activeConversationId, onSelectConversation,
+  onRename, onDelete, collapsed = false, onToggleCollapse,
 }: QuestionNavProps) {
-  const userMessages = messages.filter(m => m.role === "user");
+  // Inline rename / delete-confirm UI state (local to the sidebar)
+  const [editingId,         setEditingId]         = useState<string | null>(null);
+  const [editValue,         setEditValue]         = useState("");
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const editDoneRef = useRef(false); // dedupes Enter + blur both committing
+
+  const startRename = (c: Conversation) => {
+    editDoneRef.current = false;
+    setConfirmingDeleteId(null);
+    setEditingId(c.id);
+    setEditValue(c.title);
+  };
+
+  const finishRename = (c: Conversation) => {
+    if (editDoneRef.current) return;
+    editDoneRef.current = true;
+    const v = editValue.trim();
+    setEditingId(null);
+    setEditValue("");
+    if (v && v !== c.title) onRename(c.id, v); // empty/unchanged → revert silently
+  };
+
+  const cancelRename = () => {
+    editDoneRef.current = true;
+    setEditingId(null);
+    setEditValue("");
+  };
+
+  // ── Collapsed icon rail (desktop only) ──────────────────────────────────────
+  if (collapsed && onToggleCollapse) {
+    return (
+      <aside
+        className="flex flex-col items-center h-full w-full overflow-hidden py-4"
+        style={{ background: "var(--iq-surface)", borderRight: "1px solid var(--iq-border)" }}
+      >
+        {/* Logo */}
+        <div
+          className="rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ width: 30, height: 30, background: "var(--iq-teal)" }}
+        >
+          <span className="font-display text-sm leading-none" style={{ color: "#fff" }}>IQ</span>
+        </div>
+
+        {/* New chat */}
+        <button
+          onClick={onNewChat}
+          disabled={isLoading}
+          title="New chat"
+          className="mt-4 rounded-lg flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+          style={{ width: 30, height: 30, background: "var(--iq-teal)", color: "#fff" }}
+        >
+          <i className="ti ti-plus text-base" />
+        </button>
+
+        {/* Conversations indicator */}
+        <div
+          className="mt-3 flex items-center justify-center flex-shrink-0"
+          style={{ width: 30, height: 30, color: "var(--iq-hint)" }}
+          title="Conversations"
+        >
+          <i className="ti ti-message text-base" />
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Expand toggle */}
+        <button
+          onClick={onToggleCollapse}
+          title="Expand sidebar"
+          className="flex items-center justify-center"
+          style={{ width: 24, height: 24, color: "#9E9B93" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "#1A1A2E")}
+          onMouseLeave={e => (e.currentTarget.style.color = "#9E9B93")}
+        >
+          <i className="ti ti-chevron-right text-base" />
+        </button>
+      </aside>
+    );
+  }
 
   return (
     <aside
-      className="flex flex-col h-full"
-      style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border)" }}
+      className="flex flex-col h-full w-full min-w-0 overflow-hidden"
+      style={{ background: "var(--iq-surface)", borderRight: "1px solid var(--iq-border)" }}
     >
       {/* ── Logo ──────────────────────────────────────────────────────────── */}
-      <div className="px-5 pt-6 pb-5" style={{ borderBottom: "1px solid var(--border-dim)" }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ background: "linear-gradient(135deg, #1A3A72 0%, #0D2050 100%)", border: "1px solid #1E3A6E" }}
-            >
-              <span className="text-xs font-bold tracking-wider" style={{ color: "var(--accent)" }}>IQ</span>
-            </div>
-            <div>
-              <h1 className="font-display text-sm font-semibold leading-tight" style={{ color: "var(--text-primary)" }}>
-                ImmigrationIQ
-              </h1>
-              <p className="text-xs leading-none mt-0.5" style={{ color: "var(--text-muted)" }}>
-                US Immigration
-              </p>
-            </div>
+      <div className="px-4 pt-5 pb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div
+            className="rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ width: 30, height: 30, background: "var(--iq-teal)" }}
+          >
+            <span className="font-display text-sm leading-none" style={{ color: "#fff" }}>
+              IQ
+            </span>
           </div>
-
-          {/* Close button — mobile only */}
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="md:hidden w-7 h-7 flex items-center justify-center rounded-md"
-              style={{ color: "var(--text-muted)" }}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+          <h1 className="font-display leading-none" style={{ fontSize: 14, color: "var(--iq-ink)" }}>
+            ImmigrationIQ
+          </h1>
         </div>
+
+        {/* Close button — mobile only */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="md:hidden w-7 h-7 flex items-center justify-center rounded-md"
+            style={{ color: "var(--iq-muted)" }}
+          >
+            <i className="ti ti-x text-base" />
+          </button>
+        )}
       </div>
 
       {/* ── Mode toggle ───────────────────────────────────────────────────── */}
-      <div className="px-3 py-4" style={{ borderBottom: "1px solid var(--border-dim)" }}>
-        <p className="text-xs uppercase tracking-widest mb-2.5 px-2" style={{ color: "var(--text-muted)" }}>
-          Mode
-        </p>
-        <div className="flex rounded-lg p-0.5" style={{ background: "var(--bg-elevated)" }}>
-          {(["student", "professional"] as Mode[]).map(m => (
+      <div className="px-3 pb-3">
+        <div
+          className="flex rounded-lg p-0.5"
+          style={{ background: "var(--iq-surface-2)" }}
+        >
+          {MODES.map(({ key, label, icon }) => (
             <button
-              key={m}
-              onClick={() => onModeChange(m)}
+              key={key}
+              onClick={() => onModeChange(key)}
               disabled={isLoading}
-              className="flex-1 py-1.5 rounded-md text-xs font-medium transition-all duration-200 capitalize disabled:opacity-50"
-              style={mode === m
-                ? { background: "var(--bg-surface)", color: "var(--accent)", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }
-                : { color: "var(--text-secondary)" }
+              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 disabled:opacity-50"
+              style={mode === key
+                ? { background: "var(--iq-white)", color: "var(--iq-teal)", boxShadow: "0 1px 2px rgba(26,26,46,0.08)" }
+                : { color: "var(--iq-muted)" }
               }
             >
-              {m}
+              <i className={`ti ${icon} text-sm`} />
+              {label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* ── Question history ──────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-3 py-3">
-        {userMessages.length === 0 ? (
-          <p className="text-xs px-2 mt-2" style={{ color: "var(--text-muted)" }}>
-            Your questions will appear here.
+      {/* ── New chat ──────────────────────────────────────────────────────── */}
+      <div className="px-3 pb-3">
+        <button
+          onClick={onNewChat}
+          disabled={isLoading}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-opacity duration-150 disabled:opacity-50"
+          style={{ background: "var(--iq-teal)", color: "#fff" }}
+        >
+          <i className="ti ti-plus text-base" />
+          New chat
+        </button>
+      </div>
+
+      {/* ── Conversation list (signed in) / sign-in prompt (signed out) ───── */}
+      <div className="flex-1 overflow-y-auto px-2 py-1">
+        {!userId ? (
+          <p className="px-2 mt-2" style={{ fontSize: 11, color: "var(--iq-hint)" }}>
+            Sign in to save conversations
+          </p>
+        ) : conversations.length === 0 ? (
+          <p className="px-2 mt-2" style={{ fontSize: 11, color: "var(--iq-hint)" }}>
+            No saved chats yet.
           </p>
         ) : (
           <>
-            <p className="text-xs uppercase tracking-widest mb-2 px-2" style={{ color: "var(--text-muted)" }}>
-              This chat
+            <p className="text-[10px] uppercase tracking-widest mb-1.5 px-2" style={{ color: "var(--iq-hint)" }}>
+              Conversations
             </p>
             <ul className="space-y-0.5">
-              {userMessages.map((msg, idx) => (
-                <li key={msg.id}>
-                  <button
-                    onClick={() => onQuestionClick(msg.id)}
-                    className="w-full text-left px-2.5 py-2 rounded-md text-xs leading-snug transition-colors duration-150 flex items-start gap-1.5"
-                    style={{ color: "var(--text-secondary)" }}
-                    onMouseEnter={e => {
-                      (e.currentTarget).style.background = "var(--bg-elevated)";
-                      (e.currentTarget).style.color = "var(--text-primary)";
-                    }}
-                    onMouseLeave={e => {
-                      (e.currentTarget).style.background = "transparent";
-                      (e.currentTarget).style.color = "var(--text-secondary)";
-                    }}
-                  >
-                    <span className="flex-shrink-0 w-4 text-right" style={{ color: "var(--text-muted)" }}>
-                      {idx + 1}.
-                    </span>
-                    <span className="line-clamp-2 flex-1">{msg.content}</span>
-                  </button>
-                </li>
-              ))}
+              {conversations.map((c) => {
+                const active     = c.id === activeConversationId;
+                const editing    = editingId === c.id;
+                const confirming = confirmingDeleteId === c.id;
+                return (
+                  <li key={c.id}>
+                    <div
+                      className="group flex items-center rounded-md transition-colors duration-150"
+                      style={{ background: active ? "#D9D6CC" : "transparent" }}
+                      onMouseEnter={e => { if (!active && !editing) e.currentTarget.style.background = "var(--iq-surface-2)"; }}
+                      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                    >
+                      {editing ? (
+                        <div className="flex items-center gap-2 flex-1 min-w-0 px-2.5 py-2">
+                          <i className="ti ti-message text-sm flex-shrink-0" style={{ color: "var(--iq-hint)" }} />
+                          <input
+                            autoFocus
+                            value={editValue}
+                            onChange={e => setEditValue(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") finishRename(c);
+                              else if (e.key === "Escape") cancelRename();
+                            }}
+                            onBlur={() => finishRename(c)}
+                            className="flex-1 min-w-0 text-xs outline-none border-0"
+                            style={{ background: "#D9D6CC", borderRadius: 4, padding: "2px 6px", color: "var(--iq-ink)" }}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => onSelectConversation(c.id)}
+                          className="flex items-center gap-2 flex-1 min-w-0 px-2.5 py-2 text-left text-xs leading-snug"
+                          style={{ color: active ? "var(--iq-ink)" : "var(--iq-muted)" }}
+                        >
+                          <i className="ti ti-message text-sm flex-shrink-0" style={{ color: "var(--iq-hint)" }} />
+                          <span className="truncate flex-1 min-w-0">{c.title}</span>
+                        </button>
+                      )}
+
+                      {/* Hover actions / delete confirmation (hidden while renaming) */}
+                      {!editing && (confirming ? (
+                        <div className="flex items-center gap-1 pr-2 flex-shrink-0">
+                          <span className="text-[11px]" style={{ color: "var(--iq-muted)" }}>Delete?</span>
+                          <button
+                            onClick={() => { setConfirmingDeleteId(null); onDelete(c.id); }}
+                            title="Confirm delete"
+                            className="flex items-center justify-center"
+                            style={{ width: 20, height: 20, color: "#DC2626" }}
+                          >
+                            <i className="ti ti-check text-sm" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteId(null)}
+                            title="Cancel"
+                            className="flex items-center justify-center"
+                            style={{ width: 20, height: 20, color: "var(--iq-hint)" }}
+                          >
+                            <i className="ti ti-x text-sm" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 pr-2 flex-shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
+                          <button
+                            onClick={() => startRename(c)}
+                            title="Rename"
+                            className="flex items-center justify-center"
+                            style={{ width: 20, height: 20, color: "#9E9B93" }}
+                            onMouseEnter={e => (e.currentTarget.style.color = "#1A1A2E")}
+                            onMouseLeave={e => (e.currentTarget.style.color = "#9E9B93")}
+                          >
+                            <i className="ti ti-pencil text-sm" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteId(c.id)}
+                            title="Delete"
+                            className="flex items-center justify-center"
+                            style={{ width: 20, height: 20, color: "#9E9B93" }}
+                            onMouseEnter={e => (e.currentTarget.style.color = "#DC2626")}
+                            onMouseLeave={e => (e.currentTarget.style.color = "#9E9B93")}
+                          >
+                            <i className="ti ti-trash text-sm" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}
       </div>
 
-      {/* ── Bottom actions ────────────────────────────────────────────────── */}
-      <div className="px-3 pb-4 pt-3 space-y-1.5" style={{ borderTop: "1px solid var(--border-dim)" }}>
+      {/* ── Collapse toggle (desktop only) ────────────────────────────────── */}
+      {onToggleCollapse && (
+        <div className="px-3 pb-2 flex justify-end">
+          <button
+            onClick={onToggleCollapse}
+            title="Collapse sidebar"
+            className="flex items-center justify-center"
+            style={{ width: 24, height: 24, color: "#9E9B93" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "#1A1A2E")}
+            onMouseLeave={e => (e.currentTarget.style.color = "#9E9B93")}
+          >
+            <i className="ti ti-chevron-left text-base" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Footer: export + auth ─────────────────────────────────────────── */}
+      <div className="px-3 pb-4 pt-2 space-y-2" style={{ borderTop: "1px solid var(--iq-border)" }}>
         <button
           onClick={onExport}
           disabled={messages.length === 0}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition-colors duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-          style={{ color: "var(--text-secondary)" }}
-          onMouseEnter={e => {
-            if (!messages.length) return;
-            (e.currentTarget).style.background = "var(--bg-elevated)";
-            (e.currentTarget).style.color = "var(--text-primary)";
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget).style.background = "transparent";
-            (e.currentTarget).style.color = "var(--text-secondary)";
-          }}
+          className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-xs transition-colors duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
+          style={{ color: "var(--iq-muted)" }}
+          onMouseEnter={e => { if (messages.length) e.currentTarget.style.color = "var(--iq-ink)"; }}
+          onMouseLeave={e => { e.currentTarget.style.color = "var(--iq-muted)"; }}
         >
-          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
+          <i className="ti ti-download text-sm" />
           Export chat (.md)
         </button>
 
-        <button
-          onClick={onNewChat}
-          disabled={isLoading}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition-colors duration-150 disabled:opacity-50"
-          style={{ color: "var(--text-secondary)" }}
-          onMouseEnter={e => {
-            if (isLoading) return;
-            (e.currentTarget).style.background = "var(--bg-elevated)";
-            (e.currentTarget).style.color = "var(--text-primary)";
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget).style.background = "transparent";
-            (e.currentTarget).style.color = "var(--text-secondary)";
-          }}
-        >
-          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4v16m8-8H4" />
-          </svg>
-          New chat
-        </button>
+        <AuthButton />
       </div>
     </aside>
   );

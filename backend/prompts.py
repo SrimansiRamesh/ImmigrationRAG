@@ -57,6 +57,8 @@ Cite sources inline in plain language:
 (Source: IRS Publication 519, Chapter 1)
 Include the source URL when available.
 
+When you reference information from the provided context, cite the source inline using square bracket numbers like [1], [2], [3]. The numbers correspond to the order of the sources as provided in the context. Use citations naturally at the end of the sentence or clause they support. You may cite the same source multiple times. Do not add a references section at the end — citations are inline only.
+
 ## Hard Boundaries — Never Violate These
 - ONLY answer based on the provided context below. If the context
   does not cover the question, say exactly:
@@ -151,6 +153,8 @@ Cite with specificity — never just "USCIS website":
 - Policy Manual: (USCIS Policy Manual, Vol. 2, Part B, Ch. 3)
 - Statute: (INA §214(i)(1))
 - DOL: (20 CFR §655.731)
+
+When you reference information from the provided context, cite the source inline using square bracket numbers like [1], [2], [3]. The numbers correspond to the order of the sources as provided in the context. Use citations naturally at the end of the sentence or clause they support. You may cite the same source multiple times. Do not add a references section at the end — citations are inline only.
 
 ## Hard Boundaries — Never Violate These
 - ONLY answer based on the provided context below. If the context

@@ -7,12 +7,20 @@
  * Shows the sources from the currently "active" message with links.
  */
 
-import { Source } from "@/lib/api";
+import { Source, EvalScores } from "@/lib/api";
 
 interface SourcesPanelProps {
   sources: Source[];
   onClose: () => void;
+  activeIndex?: number | null;
+  scores?: EvalScores | null;
 }
+
+const QUALITY_ROWS: { label: string; key: keyof EvalScores }[] = [
+  { label: "Faithfulness", key: "faithfulness" },
+  { label: "Relevance",    key: "answer_relevance" },
+  { label: "Precision",    key: "context_precision" },
+];
 
 /** Convert YYYYMMDD integer → "Jan 2024" string. Returns null if missing/invalid. */
 function formatEffectiveDate(d: number | null | undefined): string | null {
@@ -24,11 +32,11 @@ function formatEffectiveDate(d: number | null | undefined): string | null {
   return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
-const JURISDICTION_META: Record<string, { label: string; color: string; dot: string }> = {
-  uscis:      { label: "USCIS",          color: "#1E3A8A", dot: "#3B82F6" },
-  irs:        { label: "IRS",            color: "#14532D", dot: "#22C55E" },
-  dol:        { label: "Dept. of Labor", color: "#78350F", dot: "#F59E0B" },
-  state_dept: { label: "State Dept.",    color: "#581C87", dot: "#A855F7" },
+const JURISDICTION_META: Record<string, { label: string; bg: string; fg: string }> = {
+  uscis:      { label: "USCIS",       bg: "var(--iq-teal-light)", fg: "var(--iq-teal-dark)" },
+  dol:        { label: "DOL",         bg: "var(--iq-blue-light)", fg: "var(--iq-blue-dark)" },
+  irs:        { label: "IRS",         bg: "var(--iq-amber-light)", fg: "var(--iq-amber-dark)" },
+  state_dept: { label: "State Dept.", bg: "var(--iq-surface)",    fg: "var(--iq-muted)" },
 };
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -40,110 +48,101 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   faq:           "FAQ",
 };
 
-export default function SourcesPanel({ sources, onClose }: SourcesPanelProps) {
+export default function SourcesPanel({ sources, onClose, activeIndex = null, scores = null }: SourcesPanelProps) {
   return (
     <aside
       className="flex flex-col h-full"
-      style={{ background: "var(--bg-surface)", borderLeft: "1px solid var(--border)" }}
+      style={{ background: "var(--iq-surface)", borderLeft: "1px solid var(--iq-border)" }}
     >
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 py-4 flex-shrink-0"
-        style={{ borderBottom: "1px solid var(--border-dim)" }}
-      >
+      <div className="flex items-center justify-between px-4 py-4 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-            style={{ color: "var(--accent)" }}>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--text-secondary)" }}>
+          <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--iq-hint)" }}>
             Sources
           </span>
           <span
-            className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-            style={{ background: "var(--bg-elevated)", color: "var(--accent)" }}
+            className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+            style={{ background: "var(--iq-white)", color: "var(--iq-muted)" }}
           >
-            {sources.length}
+            {sources.length} retrieved
           </span>
         </div>
         <button
           onClick={onClose}
           className="w-6 h-6 rounded flex items-center justify-center transition-colors"
-          style={{ color: "var(--text-muted)" }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")
-          }
+          style={{ color: "var(--iq-hint)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--iq-ink)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--iq-hint)")}
           aria-label="Close sources panel"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <i className="ti ti-x text-base" />
         </button>
       </div>
 
       {/* Sources list */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2.5">
         {sources.map((source, idx) => {
           const meta = JURISDICTION_META[source.jurisdiction];
           const docLabel = DOC_TYPE_LABELS[source.doc_type] || source.doc_type;
           const dateLabel = formatEffectiveDate(source.effective_date);
 
+          const isActive = activeIndex === idx;
+
           return (
             <div
               key={idx}
-              className="rounded-lg p-3 transition-colors"
+              className="relative rounded-lg p-3 transition-colors duration-200"
               style={{
-                background: "var(--bg-elevated)",
-                border: "1px solid var(--border-dim)",
+                background: isActive ? "#F0FAF7" : "var(--iq-white)",
+                border: `1px solid ${isActive ? "#0F6B6B" : "var(--iq-border)"}`,
               }}
             >
-              {/* Jurisdiction + doc type row */}
-              <div className="flex items-center gap-1.5 mb-2">
-                {meta && (
+              {/* Numbered badge */}
+              <span
+                className="absolute top-2.5 right-2.5 flex items-center justify-center"
+                style={{ width: 16, height: 16, background: "#E1F5EE", color: "#0F6E56", borderRadius: 4, fontSize: 9, fontWeight: 600 }}
+              >
+                {idx + 1}
+              </span>
+
+              {/* Agency tag */}
+              <div className="flex items-center gap-1.5 mb-2 pr-6">
+                {meta ? (
                   <span
-                    className="flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded"
-                    style={{ background: meta.color + "33", color: meta.dot }}
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                    style={{ background: meta.bg, color: meta.fg }}
                   >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{ background: meta.dot }}
-                    />
                     {meta.label}
                   </span>
-                )}
-                {!meta && source.jurisdiction && (
+                ) : source.jurisdiction ? (
                   <span
-                    className="text-xs px-1.5 py-0.5 rounded font-medium uppercase"
-                    style={{ background: "var(--bg-surface)", color: "var(--text-secondary)" }}
+                    className="text-[10px] px-1.5 py-0.5 rounded font-medium uppercase"
+                    style={{ background: "var(--iq-surface)", color: "var(--iq-muted)" }}
                   >
                     {source.jurisdiction}
                   </span>
-                )}
+                ) : null}
                 {docLabel && (
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  <span className="text-[10px]" style={{ color: "var(--iq-hint)" }}>
                     {docLabel}
                   </span>
                 )}
               </div>
 
-              {/* Section name */}
+              {/* Title */}
               {source.section && (
-                <p className="text-xs font-medium mb-1.5 leading-snug" style={{ color: "var(--text-primary)" }}>
+                <p
+                  className="mb-1.5 leading-snug line-clamp-2"
+                  style={{ fontSize: 12, fontWeight: 500, color: "var(--iq-ink)" }}
+                >
                   {source.section}
                 </p>
               )}
 
-              {/* Effective date badge */}
+              {/* Effective date */}
               {dateLabel && (
-                <p className="text-xs mb-1.5 flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-                  <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
+                <p className="flex items-center gap-1 mb-1.5" style={{ fontSize: 11, color: "var(--iq-hint)" }}>
+                  <i className="ti ti-calendar-time text-xs" />
                   Current as of {dateLabel}
                 </p>
               )}
@@ -154,19 +153,12 @@ export default function SourcesPanel({ sources, onClose }: SourcesPanelProps) {
                   href={source.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs transition-colors group"
-                  style={{ color: "var(--text-secondary)" }}
-                  onMouseEnter={(e) =>
-                    ((e.currentTarget as HTMLAnchorElement).style.color = "var(--accent)")
-                  }
-                  onMouseLeave={(e) =>
-                    ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)")
-                  }
+                  className="flex items-center gap-1 transition-colors"
+                  style={{ fontSize: 11, color: "var(--iq-muted)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--iq-teal)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--iq-muted)")}
                 >
-                  <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
+                  <i className="ti ti-external-link text-xs flex-shrink-0" />
                   <span className="truncate">{source.url.replace(/^https?:\/\//, "")}</span>
                 </a>
               )}
@@ -175,12 +167,40 @@ export default function SourcesPanel({ sources, onClose }: SourcesPanelProps) {
         })}
       </div>
 
+      {/* Response quality (RAGAS-style eval scores) — fades in once scores arrive */}
+      {scores && (
+        <div className="px-3 pb-3 flex-shrink-0 iq-fade-in">
+          <p
+            className="mb-2"
+            style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", color: "#9E9B93" }}
+          >
+            Response Quality
+          </p>
+          <div style={{ background: "#EDEAE0", borderRadius: 8, padding: "10px 12px" }}>
+            {QUALITY_ROWS.map(({ label, key }) => {
+              const value = scores[key];
+              const pct = value != null ? Math.max(0, Math.min(1, value)) * 100 : 0;
+              return (
+                <div key={key} className="flex items-center gap-2 py-1">
+                  <span style={{ fontSize: 11, color: "#4A4840", width: 80, flexShrink: 0 }}>{label}</span>
+                  <div style={{ flex: 1, height: 4, background: "#D9D6CC", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ height: 4, background: "#1D9E75", width: `${pct}%` }} />
+                  </div>
+                  <span
+                    style={{ fontSize: 11, fontWeight: 500, color: "#1A1A2E", width: 26, flexShrink: 0, textAlign: "right" }}
+                  >
+                    {value != null ? value.toFixed(2) : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Footer disclaimer */}
-      <div
-        className="px-4 py-3 flex-shrink-0"
-        style={{ borderTop: "1px solid var(--border-dim)" }}
-      >
-        <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+      <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: "1px solid var(--iq-border)" }}>
+        <p className="leading-relaxed" style={{ fontSize: 11, color: "var(--iq-hint)" }}>
           All sources are official government publications. Always verify current information at the source.
         </p>
       </div>

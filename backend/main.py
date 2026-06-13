@@ -8,18 +8,21 @@ Usage:
     uvicorn backend.main:app --reload --port 8000
 """
 
+import asyncio
 import io
 import logging
 import os
+import time
+import uuid
 import httpx
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from config import validate_config, GEMINI_API_KEY, GEMINI_CLASSIFIER_MODEL
-from chain import run_chain
+from config import validate_config, AZURE_OPENAI_CHAT_DEPLOYMENT
+from chain import run_chain, chat_client
 from memory import clear_memory, get_active_sessions
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -32,20 +35,23 @@ log = logging.getLogger(__name__)
 # Eval service URL — runs on port 8001
 EVAL_SERVICE_URL = os.getenv("EVAL_SERVICE_URL", "http://localhost:8001/evaluate")
 
-# ── Eval fire-and-forget ──────────────────────────────────────────────────────
+# ── Eval (fire-and-forget) ────────────────────────────────────────────────────
 
-async def fire_eval(payload: dict) -> None:
+EVAL_TIMEOUT_SECONDS = 4.0
+
+async def _post_eval(eval_id: str, payload: dict) -> None:
     """
-    Fire-and-forget POST to the eval service.
-    Runs as a background task — never blocks the chat response.
-    Fails silently if the eval service is down.
+    Fire-and-forget POST to the eval service. Scheduled via asyncio.create_task
+    so it runs after the chat response has already been returned — it must never
+    add to response time. The eval_id lets the frontend poll for scores once the
+    eval service finishes. Fails silently if the eval service is down or slow.
     """
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(EVAL_SERVICE_URL, json=payload)
+        async with httpx.AsyncClient(timeout=EVAL_TIMEOUT_SECONDS) as client:
+            await client.post(EVAL_SERVICE_URL, json={**payload, "eval_id": eval_id})
     except Exception as e:
-        # Eval service being down should never affect the user
-        log.warning(f"Eval service unreachable: {e}")
+        # Eval service being down/slow should never affect the user
+        log.warning(f"Eval post failed: {e}")
 
 
 # ── Lifespan (startup + shutdown) ─────────────────────────────────────────────
@@ -103,6 +109,7 @@ class ChatResponse(BaseModel):
     sources:     list[SourceItem]
     complexity:  str
     tokens_used: int
+    eval_id:     Optional[str] = None   # poll GET /result/{eval_id} for scores
 
 
 class ParseDocumentResponse(BaseModel):
@@ -129,21 +136,25 @@ async def health_check():
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
+async def chat(request: ChatRequest):
     """
-    Main chat endpoint. Returns answer immediately.
-    Fires eval as a background task — user never waits for it.
+    Main chat endpoint. Generates the answer and returns immediately. Eval is
+    fired as a non-blocking background task (asyncio.create_task) and never
+    awaited, so it adds nothing to response time; the response carries no scores.
     """
+    start = time.time()
     try:
-        result = run_chain(
+        result = await run_chain(
             message=request.message,
             session_id=request.session_id,
             mode=request.mode,
             document_context=request.document_context,
         )
 
-        # Fire eval as background task — non-blocking
-        background_tasks.add_task(fire_eval, {
+        # Fire-and-forget eval — scheduled on the loop, never awaited, so it
+        # adds nothing to response time. The frontend polls /result/{eval_id}.
+        eval_id = str(uuid.uuid4())
+        asyncio.create_task(_post_eval(eval_id, {
             "session_id":  request.session_id,
             "question":    request.message,
             "answer":      result["answer"],
@@ -152,16 +163,22 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
             "mode":        request.mode,
             "complexity":  result["complexity"],
             "tokens_used": result["tokens_used"],
-        })
+        }))
 
-        return ChatResponse(
+        response = ChatResponse(
             answer=result["answer"],
             sources=[SourceItem(**s) for s in result["sources"]],
             complexity=result["complexity"],
             tokens_used=result["tokens_used"],
+            eval_id=eval_id,
         )
+        log.info(f"Request completed in {time.time() - start:.2f}s")
+        return response
     except Exception as e:
         log.error(f"Chain error for session {request.session_id[:8]}: {e}")
+        err_text = str(e)
+        if "503" in err_text or "UNAVAILABLE" in err_text:
+            raise HTTPException(status_code=503, detail="UNAVAILABLE")
         raise HTTPException(
             status_code=500,
             detail="An error occurred processing your request. Please try again."
@@ -172,7 +189,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 async def parse_document(file: UploadFile = File(...)):
     """
     Parse an uploaded document and return its text.
-    Summarises via Gemini if the document exceeds the size threshold.
+    Summarises via Azure OpenAI if the document exceeds the size threshold.
     Supports: PDF, .txt, .md
     """
     filename = file.filename or "document"
@@ -206,10 +223,6 @@ async def parse_document(file: UploadFile = File(...)):
     summarised = False
     if len(raw_text) > SUMMARISE_THRESHOLD:
         try:
-            from google import genai
-            from google.genai import types as gtypes
-
-            client = genai.Client(api_key=GEMINI_API_KEY)
             prompt = (
                 "Summarise the following document for use as context when answering questions. "
                 "Preserve ALL of the following verbatim: dates, deadlines, dollar amounts, fees, "
@@ -218,15 +231,13 @@ async def parse_document(file: UploadFile = File(...)):
                 "For narrative sections, summarise concisely.\n\n"
                 f"Document ({filename}):\n{raw_text}"
             )
-            resp = client.models.generate_content(
-                model=GEMINI_CLASSIFIER_MODEL,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=2048,
-                ),
+            resp = await chat_client.chat.completions.create(
+                model=AZURE_OPENAI_CHAT_DEPLOYMENT,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=2048,
             )
-            raw_text   = resp.text.strip()
+            raw_text   = (resp.choices[0].message.content or "").strip()
             summarised = True
             log.info(f"Document summarised | file={filename} | chars={len(raw_text)}")
         except Exception as e:
@@ -251,7 +262,7 @@ async def clear_session(session_id: str):
 async def detailed_health():
     """Detailed health check — verifies all downstream services."""
     from qdrant_client import QdrantClient
-    from backend.config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME
+    from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME
 
     status = {
         "server":          "healthy",

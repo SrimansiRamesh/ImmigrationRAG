@@ -6,7 +6,7 @@ The main RAG chain — orchestrates the full pipeline:
   2. Route accordingly (direct retrieval vs decompose + RAG-Fusion)
   3. Retrieve and rerank relevant chunks
   4. Inject context + memory into system prompt
-  5. Generate response with Gemini
+  5. Generate response with Azure OpenAI
   6. Return answer + sources + context + tokens used
 
 This is the single function the FastAPI endpoint calls.
@@ -15,18 +15,11 @@ Everything else in the backend exists to support this.
 
 import logging
 from langchain.memory import ConversationBufferWindowMemory
-from google import genai
-from google.genai import types
+from openai import AsyncAzureOpenAI
 from typing import Optional
 
-from config import (
-    GEMINI_API_KEY,
-    GEMINI_CHAT_MODEL,
-    GEMINI_CLASSIFIER_MODEL,
-    TEMPERATURE,
-    MAX_TOKENS,
-    MAX_SUB_QUERIES,
-)
+import config
+from config import MAX_SUB_QUERIES
 from prompts import (
     get_system_prompt,
     CLASSIFIER_PROMPT,
@@ -37,38 +30,40 @@ from memory import get_memory
 
 log = logging.getLogger(__name__)
 
-# ── Gemini client ─────────────────────────────────────────────────────────────
-_gemini = genai.Client(api_key=GEMINI_API_KEY)
+# ── Azure OpenAI chat client ──────────────────────────────────────────────────
+chat_client = AsyncAzureOpenAI(
+    azure_endpoint=config.AZURE_OPENAI_CHAT_ENDPOINT,
+    api_key=config.AZURE_OPENAI_CHAT_API_KEY,
+    api_version=config.AZURE_OPENAI_CHAT_API_VERSION,
+)
 
 
-def _gemini_call(prompt: str, model: str, max_tokens: int = 1500) -> str:
+async def _chat_call(prompt: str, max_tokens: int) -> str:
     """
-    Make a Gemini API call and return the response text.
-    Single helper used by classifier, decomposer, and generator.
+    Single-prompt Azure OpenAI chat completion.
+    Used by the lightweight classifier and decomposer steps.
     """
-    response = _gemini.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=TEMPERATURE,
-            max_output_tokens=max_tokens,
-        )
+    response = await chat_client.chat.completions.create(
+        model=config.AZURE_OPENAI_CHAT_DEPLOYMENT,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=max_tokens,
     )
-    return response.text.strip()
+    return (response.choices[0].message.content or "").strip()
 
 
 # ── Step 1: Complexity classifier ─────────────────────────────────────────────
 
-def classify_query(query: str) -> str:
+async def classify_query(query: str) -> str:
     """
     Classify query as 'simple' or 'complex' using a lightweight LLM call.
-    Uses the cheaper/faster classifier model — saves tokens since
-    classification is a routing decision, not a knowledge task.
+    Capped at max_tokens=10 — classification is a routing decision, not a
+    knowledge task, so it should be fast and cheap.
     Returns: "simple" or "complex"
     """
     prompt = CLASSIFIER_PROMPT.format(query=query)
     try:
-        result = _gemini_call(prompt, GEMINI_CLASSIFIER_MODEL, max_tokens=5)
+        result = await _chat_call(prompt, max_tokens=10)
         return "complex" if "complex" in result.lower() else "simple"
     except Exception as e:
         log.warning(f"Classifier failed, defaulting to simple: {e}")
@@ -77,7 +72,7 @@ def classify_query(query: str) -> str:
 
 # ── Step 2: Query decomposition ───────────────────────────────────────────────
 
-def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
+async def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
     """
     Break a complex query into n focused sub-queries.
     Each sub-query is independently retrievable and covers
@@ -86,7 +81,7 @@ def decompose_query(query: str, n: int = MAX_SUB_QUERIES) -> list[str]:
     """
     prompt = DECOMPOSITION_PROMPT.format(query=query, n=n)
     try:
-        raw = _gemini_call(prompt, GEMINI_CLASSIFIER_MODEL, max_tokens=300)
+        raw = await _chat_call(prompt, max_tokens=300)
         sub_queries = [
             line.strip()
             for line in raw.split("\n")
@@ -122,7 +117,7 @@ def format_chat_history(memory: ConversationBufferWindowMemory) -> str:
 
 # ── Step 4+5: Generate response ───────────────────────────────────────────────
 
-def generate_response(
+async def generate_response(
     query: str,
     context: str,
     chat_history: str,
@@ -130,7 +125,7 @@ def generate_response(
     document_context: Optional[str] = None,
 ) -> tuple[str, int]:
     """
-    Generate the final response using Gemini with context injected.
+    Generate the final response using Azure OpenAI with context injected.
     If document_context is provided, it is injected before RAG context
     so the LLM always has the user's document fully in view.
     """
@@ -153,34 +148,41 @@ def generate_response(
             doc_section + "\nContext from official sources:"
         )
 
-    full_prompt = f"{system_prompt}\n\nUser question: {query}"
+    user_prompt = query
 
-    response = _gemini.models.generate_content(
-        model=GEMINI_CHAT_MODEL,
-        contents=full_prompt,
-        config=types.GenerateContentConfig(
-            temperature=TEMPERATURE,
-            max_output_tokens=MAX_TOKENS,
-        )
+    response = await chat_client.chat.completions.create(
+        model=config.AZURE_OPENAI_CHAT_DEPLOYMENT,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0,
+        max_tokens=2048,
     )
 
-    # Log finish reason so truncation is visible in server logs
-    try:
-        finish_reason = response.candidates[0].finish_reason
-        if str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
-            log.warning(f"Gemini finish_reason={finish_reason} — response may be truncated")
-    except Exception:
-        pass
+    answer = response.choices[0].message.content
+    answer = (answer or "").strip()
 
-    answer      = response.text.strip()
-    tokens_used = len(full_prompt.split()) + len(answer.split())
+    # Prefer the provider's token accounting; fall back to a rough estimate.
+    # NOTE: max_tokens caps COMPLETION (output) tokens only. total_tokens also
+    # includes the (large) prompt — context + history + system prompt — so a
+    # high total does not mean the output cap is being ignored.
+    if response.usage:
+        log.info(
+            f"Tokens | prompt={response.usage.prompt_tokens} "
+            f"completion={response.usage.completion_tokens} "
+            f"total={response.usage.total_tokens} (output cap=2048)"
+        )
+        tokens_used = response.usage.total_tokens
+    else:
+        tokens_used = len(system_prompt.split()) + len(user_prompt.split()) + len(answer.split())
 
     return answer, tokens_used
 
 
 # ── Main chain function ───────────────────────────────────────────────────────
 
-def run_chain(
+async def run_chain(
     message:          str,
     session_id:       str,
     mode:             str = "student",
@@ -211,19 +213,19 @@ def run_chain(
     chat_history = format_chat_history(memory)
 
     # ── Step 1: Classify complexity ───────────────────────────────────────────
-    complexity = classify_query(message)
+    complexity = await classify_query(message)
     log.info(f"Complexity: {complexity}")
 
     # ── Step 2: Route and retrieve ────────────────────────────────────────────
     if complexity == "simple":
         context, sources = retrieve(message)
     else:
-        sub_queries = decompose_query(message)
+        sub_queries = await decompose_query(message)
         log.info(f"Sub-queries: {sub_queries}")
         context, sources = retrieve_multi(sub_queries)
 
     # ── Step 3: Generate response ─────────────────────────────────────────────
-    answer, tokens_used = generate_response(
+    answer, tokens_used = await generate_response(
         query=message,
         context=context,
         chat_history=chat_history,

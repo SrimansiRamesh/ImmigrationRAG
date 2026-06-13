@@ -1,13 +1,25 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Message, Mode, Source, ParsedDocument, sendMessage, clearSession, parseDocument } from "@/lib/api";
+import { Message, Mode, Source, ParsedDocument, sendMessage, clearSession, parseDocument, pollEvalScore } from "@/lib/api";
 import { getSessionId, resetSession } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
+import {
+  Conversation,
+  createConversation,
+  saveMessage,
+  getConversations,
+  getMessages,
+  touchConversation,
+  renameConversation,
+  deleteConversation,
+} from "@/lib/conversations";
 import ChatWindow from "@/components/ChatWindow";
 import QuestionNav from "@/components/QuestionNav";
 import SourcesPanel from "@/components/SourcesPanel";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
+import LandingPage from "@/components/LandingPage";
 
 const ACCEPTED_FILE_TYPES = ".txt,.md,.markdown,.pdf";
 
@@ -33,21 +45,15 @@ function exportChatAsMd(messages: Message[]): void {
   URL.revokeObjectURL(url);
 }
 
-function scrollToMessage(messageId: string): void {
-  const el = document.getElementById(`msg-${messageId}`);
-  if (!el) return;
-  el.scrollIntoView({ behavior: "smooth", block: "start" });
-  el.classList.add("highlight-flash");
-  setTimeout(() => el.classList.remove("highlight-flash"), 2000);
-}
-
 export default function Home() {
   const [messages,  setMessages]  = useState<Message[]>([]);
   const [mode,      setMode]      = useState<Mode>("student");
   const [input,     setInput]     = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const [activeSources,  setActiveSources]  = useState<Source[]>([]);
+  const [activeSources,    setActiveSources]    = useState<Source[]>([]);
+  const [activeMessageId,  setActiveMessageId]  = useState<string | null>(null);
+  const [activeCiteIndex,  setActiveCiteIndex]  = useState<number | null>(null);
   const [pendingDoc,     setPendingDoc]     = useState<ParsedDocument | null>(null);
   const [docLoading,     setDocLoading]     = useState(false);
 
@@ -55,8 +61,61 @@ export default function Home() {
   const [navOpen,     setNavOpen]     = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
+  // Desktop sidebar collapse (persisted)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Supabase auth + persisted conversations (signed-in users only)
+  const [userId,         setUserId]         = useState<string | null>(null);
+  const [authReady,      setAuthReady]      = useState(false);
+  const [anonMode,       setAnonMode]       = useState(false);
+  const [conversations,  setConversations]  = useState<Conversation[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
   const inputRef     = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Auth: track session + load this user's conversations ──────────────────
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshFor = async (uid: string | null) => {
+      if (!mounted) return;
+      setUserId(uid);
+      if (uid) {
+        try {
+          const convos = await getConversations(uid);
+          if (mounted) setConversations(convos);
+        } catch {
+          if (mounted) setConversations([]);
+        }
+      } else {
+        setConversations([]);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      refreshFor(data.session?.user?.id ?? null);
+      if (mounted) setAuthReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      refreshFor(session?.user?.id ?? null);
+    });
+
+    return () => { mounted = false; sub.subscription.unsubscribe(); };
+  }, []);
+
+  // ── Restore persisted sidebar collapse state ──────────────────────────────
+  useEffect(() => {
+    if (localStorage.getItem("sidebar-collapsed") === "true") setSidebarCollapsed(true);
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem("sidebar-collapsed", String(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -77,10 +136,25 @@ export default function Home() {
     }
   };
 
+  // Poll the eval service for a message's quality scores (fire-and-forget).
+  const pollForScores = useCallback(async (evalId: string, messageId: string) => {
+    for (let i = 0; i < 10; i++) {              // max 10 attempts
+      await new Promise(r => setTimeout(r, 2000)); // 2s between polls
+      const scores = await pollEvalScore(evalId);
+      if (scores) {
+        setMessages(prev => prev.map(m => m.id === messageId ? { ...m, scores } : m));
+        break;
+      }
+    }
+  }, []);
+
   const handleSend = useCallback(async (overrideText?: string) => {
+    console.log("handleSend entered", { overrideText, input, isLoading }); // TEMP debug
     const text = (overrideText ?? input).trim();
     if (!text || isLoading) return;
+    setActiveCiteIndex(null);
     const sessionId = getSessionId();
+    console.log("handleSend got sessionId", { sessionId, mode }); // TEMP debug
     const messageToSend = pendingDoc
       ? `[Attached document: "${pendingDoc.filename}"${pendingDoc.summarised ? " (summarised)" : ""}]\n\n${pendingDoc.text}\n\n---\n\n${text}`
       : text;
@@ -93,22 +167,61 @@ export default function Home() {
     setPendingDoc(null);
     setIsLoading(true);
     if (inputRef.current) inputRef.current.style.height = "auto";
+
+    // Signed-in: create a conversation on the first message of this chat
+    let convId = conversationId;
+    if (userId && !convId) {
+      try {
+        convId = await createConversation(userId, text.slice(0, 60), mode);
+        setConversationId(convId);
+      } catch {
+        convId = null; // persistence is best-effort; never block the chat
+      }
+    }
+
     try {
       const response = await sendMessage(messageToSend, sessionId, mode);
+      const assistantId = uuidv4();
       setMessages(prev => [...prev, {
-        id: uuidv4(), role: "assistant", content: response.answer,
-        sources: response.sources, complexity: response.complexity, timestamp: new Date(),
+        id: assistantId, role: "assistant", content: response.answer,
+        sources: response.sources, complexity: response.complexity,
+        animate: true, timestamp: new Date(),
       }]);
-    } catch {
+      // Auto-reveal the sources panel when a response returns sources
+      if (response.sources && response.sources.length > 0) {
+        setActiveSources(response.sources);
+        setActiveMessageId(assistantId);
+      }
+      // Eval runs async on the backend — poll for scores and attach them later
+      if (response.eval_id) {
+        pollForScores(response.eval_id, assistantId); // fire-and-forget
+      }
+      // Persist this turn for signed-in users (best-effort)
+      if (convId && userId) {
+        try {
+          await saveMessage(convId, "user", text);
+          await saveMessage(convId, "assistant", response.answer, response.sources, response.complexity);
+          await touchConversation(convId);
+          getConversations(userId).then(setConversations).catch(() => {});
+        } catch {
+          // ignore — storage failures must not affect the chat experience
+        }
+      }
+    } catch (err) {
+      console.error("chat failed:", err); // TEMP debug
+      const errText = err instanceof Error ? err.message : String(err);
+      const isBusy = errText.includes("503") || errText.includes("UNAVAILABLE");
       setMessages(prev => [...prev, {
         id: uuidv4(), role: "assistant", timestamp: new Date(),
-        content: "Sorry, something went wrong. Please check that the backend server is running and try again.",
+        content: isBusy
+          ? "Google's AI service is temporarily busy. Please try again in a few seconds."
+          : "Sorry, something went wrong. Please check that the backend server is running and try again.",
       }]);
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
     }
-  }, [input, isLoading, mode, pendingDoc]);
+  }, [input, isLoading, mode, pendingDoc, userId, conversationId, pollForScores]);
 
   const handleNewChat = useCallback(async () => {
     const oldId = getSessionId();
@@ -117,11 +230,60 @@ export default function Home() {
     setMessages([]);
     setInput("");
     setActiveSources([]);
+    setActiveMessageId(null);
+    setActiveCiteIndex(null);
     setPendingDoc(null);
+    setConversationId(null);
     setNavOpen(false);
     if (inputRef.current) inputRef.current.style.height = "auto";
     inputRef.current?.focus();
   }, []);
+
+  const handleSelectConversation = useCallback(async (id: string) => {
+    setNavOpen(false);
+    setActiveSources([]);
+    setActiveMessageId(null);
+    setActiveCiteIndex(null);
+    setPendingDoc(null);
+    setConversationId(id);
+    // The loaded conversation gets fresh FastAPI memory — Supabase storage
+    // and the session.ts UUID memory are intentionally separate.
+    resetSession();
+    try {
+      setMessages(await getMessages(id));
+    } catch {
+      /* ignore load failure */
+    }
+  }, []);
+
+  const handleRenameConversation = useCallback(async (id: string, newTitle: string) => {
+    try {
+      await renameConversation(id, newTitle);
+      if (userId) setConversations(await getConversations(userId));
+    } catch {
+      /* ignore — title just won't update */
+    }
+  }, [userId]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    // Optimistic removal from the list
+    setConversations(prev => prev.filter(c => c.id !== id));
+    // If the deleted conversation was active, reset to an empty chat
+    if (id === conversationId) {
+      setMessages([]);
+      setConversationId(null);
+      setActiveSources([]);
+      setActiveMessageId(null);
+      setActiveCiteIndex(null);
+      setPendingDoc(null);
+      resetSession();
+    }
+    try {
+      await deleteConversation(id);
+    } catch {
+      /* ignore — row was already removed locally */
+    }
+  }, [conversationId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -133,15 +295,38 @@ export default function Home() {
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
   };
 
-  const handleViewSources = (sources: Source[]) => {
+  const handleViewSources = (sources: Source[], messageId: string) => {
+    // Always update the panel contents so the desktop right panel shows
+    // (and reopens if it was closed). Only the mobile bottom sheet is gated
+    // to small screens — on desktop it stays closed, avoiding a double render.
     setActiveSources(sources);
-    setSourcesOpen(true);
+    setActiveMessageId(messageId);
+    const isMobile = typeof window !== "undefined" && !window.matchMedia("(min-width: 768px)").matches;
+    if (isMobile) setSourcesOpen(true);
   };
 
   const showSourcesPanel = activeSources.length > 0;
+  // Derived from the active message so late-arriving polled scores update the panel reactively.
+  const activeScores = messages.find(m => m.id === activeMessageId)?.scores ?? null;
+
+  // Wait for the initial session check before deciding what to show (avoids
+  // a landing-page flash for already-signed-in users).
+  if (!authReady) {
+    return <div className="h-screen" style={{ background: "var(--iq-bg)" }} />;
+  }
+
+  // Unauthenticated → sign-in landing page, unless the user chose to
+  // continue anonymously (full chat, but no saved history).
+  if (!userId && !anonMode) {
+    return (
+      <div className="iq-fade-in">
+        <LandingPage onContinueAnon={() => setAnonMode(true)} />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
+    <div className="flex h-screen overflow-hidden iq-fade-in" style={{ background: "var(--iq-bg)" }}>
       <ColdStartOverlay />
 
       {/* ── Mobile nav drawer backdrop ───────────────────────────────────── */}
@@ -156,21 +341,31 @@ export default function Home() {
       {/* ── Left sidebar ─────────────────────────────────────────────────── */}
       {/* Desktop: always visible as normal flow element                   */}
       {/* Mobile: fixed overlay, slides in from left when navOpen          */}
-      <div className="hidden md:flex md:flex-shrink-0" style={{ width: "260px" }}>
+      <div
+        className="hidden md:flex md:flex-shrink-0 overflow-hidden"
+        style={{ width: sidebarCollapsed ? "40px" : "196px", transition: "width 0.2s ease" }}
+      >
         <QuestionNav
           messages={messages}
           mode={mode}
           onModeChange={setMode}
-          onQuestionClick={scrollToMessage}
           onNewChat={handleNewChat}
           onExport={() => exportChatAsMd(messages)}
           isLoading={isLoading}
+          userId={userId}
+          conversations={conversations}
+          activeConversationId={conversationId}
+          onSelectConversation={handleSelectConversation}
+          onRename={handleRenameConversation}
+          onDelete={handleDeleteConversation}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
         />
       </div>
 
       {/* Mobile drawer */}
       <div
-        className="md:hidden fixed z-40 h-full transition-transform duration-300 ease-in-out"
+        className="md:hidden fixed z-40 h-full overflow-hidden transition-transform duration-300 ease-in-out"
         style={{
           width: "260px",
           transform: navOpen ? "translateX(0)" : "translateX(-100%)",
@@ -180,61 +375,64 @@ export default function Home() {
           messages={messages}
           mode={mode}
           onModeChange={setMode}
-          onQuestionClick={(id) => { scrollToMessage(id); setNavOpen(false); }}
           onNewChat={handleNewChat}
           onExport={() => exportChatAsMd(messages)}
           isLoading={isLoading}
           onClose={() => setNavOpen(false)}
+          userId={userId}
+          conversations={conversations}
+          activeConversationId={conversationId}
+          onSelectConversation={handleSelectConversation}
+          onRename={handleRenameConversation}
+          onDelete={handleDeleteConversation}
         />
       </div>
 
       {/* ── Main chat column ──────────────────────────────────────────────── */}
       <main
         className="flex-1 flex flex-col min-w-0"
-        style={{ borderLeft: "1px solid var(--border)" }}
+        style={{ borderLeft: "1px solid var(--iq-border)" }}
       >
         {/* Mobile top header bar */}
         <div
           className="flex md:hidden items-center justify-between px-4 py-3 flex-shrink-0"
-          style={{ borderBottom: "1px solid var(--border-dim)", background: "var(--bg-surface)" }}
+          style={{ borderBottom: "1px solid var(--iq-border)", background: "var(--iq-surface)" }}
         >
           {/* Hamburger */}
           <button
             onClick={() => setNavOpen(v => !v)}
             className="w-8 h-8 flex items-center justify-center rounded-md"
-            style={{ color: "var(--text-secondary)" }}
+            style={{ color: "var(--iq-muted)" }}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-                d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+            <i className="ti ti-menu-2 text-xl" />
           </button>
 
           {/* Logo */}
           <div className="flex items-center gap-2">
             <div
-              className="w-6 h-6 rounded-md flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #1A3A72 0%, #0D2050 100%)", border: "1px solid #1E3A6E" }}
+              className="rounded-md flex items-center justify-center"
+              style={{ width: 24, height: 24, background: "var(--iq-teal)" }}
             >
-              <span className="text-xs font-bold" style={{ color: "var(--accent)" }}>IQ</span>
+              <span className="font-display text-xs leading-none" style={{ color: "#fff" }}>IQ</span>
             </div>
-            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>ImmigrationIQ</span>
+            <span className="font-display text-sm" style={{ color: "var(--iq-ink)" }}>ImmigrationIQ</span>
           </div>
 
           {/* Mode toggle */}
-          <div className="flex rounded-lg p-0.5" style={{ background: "var(--bg-elevated)" }}>
-            {(["student", "professional"] as Mode[]).map(m => (
+          <div className="flex rounded-lg p-0.5" style={{ background: "var(--iq-surface-2)" }}>
+            {([["student", "Student", "ti-school"], ["professional", "Pro", "ti-briefcase"]] as [Mode, string, string][]).map(([m, label, icon]) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
                 disabled={isLoading}
-                className="py-1 px-2.5 rounded-md text-xs font-medium transition-all duration-200 capitalize disabled:opacity-50"
+                className="flex items-center gap-1 py-1 px-2 rounded-md text-xs font-medium transition-all duration-200 disabled:opacity-50"
                 style={mode === m
-                  ? { background: "var(--bg-surface)", color: "var(--accent)", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }
-                  : { color: "var(--text-secondary)" }
+                  ? { background: "var(--iq-white)", color: "var(--iq-teal)", boxShadow: "0 1px 2px rgba(26,26,46,0.08)" }
+                  : { color: "var(--iq-muted)" }
                 }
               >
-                {m}
+                <i className={`ti ${icon} text-sm`} />
+                {label}
               </button>
             ))}
           </div>
@@ -245,12 +443,13 @@ export default function Home() {
           isLoading={isLoading}
           onSuggestionClick={(text) => handleSend(text)}
           onViewSources={handleViewSources}
+          onCiteClick={(i) => setActiveCiteIndex(i)}
         />
 
         {/* Input area */}
         <div
           className="flex-shrink-0 px-4 md:px-5 py-4"
-          style={{ borderTop: "1px solid var(--border-dim)", background: "var(--bg-base)" }}
+          style={{ borderTop: "1px solid var(--iq-border)", background: "var(--iq-bg)" }}
         >
           <input
             ref={fileInputRef}
@@ -264,31 +463,29 @@ export default function Home() {
             {(pendingDoc || docLoading) && (
               <div
                 className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg text-xs w-fit"
-                style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-dim)", color: "var(--text-secondary)" }}
+                style={{ background: "var(--iq-white)", border: "1px solid var(--iq-border)", color: "var(--iq-muted)" }}
               >
-                <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  style={{ color: "var(--accent)" }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
+                <i className="ti ti-paperclip text-sm flex-shrink-0" style={{ color: "var(--iq-teal)" }} />
                 {docLoading ? <span>Parsing document…</span> : (
                   <>
                     <span>
                       {pendingDoc!.filename}
-                      {pendingDoc!.summarised && <span style={{ color: "var(--text-muted)" }}> · summarised</span>}
-                      <span style={{ color: "var(--text-muted)" }}> — will be sent with this message</span>
+                      {pendingDoc!.summarised && <span style={{ color: "var(--iq-hint)" }}> · summarised</span>}
+                      <span style={{ color: "var(--iq-hint)" }}> — will be sent with this message</span>
                     </span>
-                    <button onClick={() => setPendingDoc(null)} style={{ color: "var(--text-muted)" }}>✕</button>
+                    <button onClick={() => setPendingDoc(null)} style={{ color: "var(--iq-hint)" }}>
+                      <i className="ti ti-x text-sm" />
+                    </button>
                   </>
                 )}
               </div>
             )}
 
             <div
-              className="flex items-end gap-2 rounded-2xl px-4 py-2 transition-colors"
-              style={{ background: "var(--bg-input)", border: "1px solid var(--border)" }}
-              onFocusCapture={e => (e.currentTarget.style.borderColor = "var(--accent)")}
-              onBlurCapture={e => (e.currentTarget.style.borderColor = "var(--border)")}
+              className="flex items-end gap-2 px-3 py-2 transition-colors"
+              style={{ background: "var(--iq-white)", border: "1px solid var(--iq-border)", borderRadius: "9px" }}
+              onFocusCapture={e => (e.currentTarget.style.borderColor = "var(--iq-teal)")}
+              onBlurCapture={e => (e.currentTarget.style.borderColor = "var(--iq-border)")}
             >
               <textarea
                 ref={inputRef}
@@ -299,36 +496,31 @@ export default function Home() {
                 disabled={isLoading}
                 rows={1}
                 className="flex-1 bg-transparent text-sm resize-none outline-none py-1.5 disabled:opacity-50"
-                style={{ fontSize: "16px", color: "var(--text-primary)", caretColor: "var(--accent)", maxHeight: "160px", lineHeight: "1.5" }}
+                style={{ fontSize: "16px", color: "var(--iq-ink)", caretColor: "var(--iq-teal)", maxHeight: "160px", lineHeight: "1.5" }}
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || docLoading}
                 title="Attach a document"
-                className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-colors mb-0.5 disabled:opacity-25"
-                style={{ color: "var(--text-muted)" }}
-                onMouseEnter={e => { if (!isLoading && !docLoading) (e.currentTarget).style.color = "var(--accent)"; }}
-                onMouseLeave={e => { (e.currentTarget).style.color = "var(--text-muted)"; }}
+                className="flex-shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-colors mb-0.5 disabled:opacity-25"
+                style={{ color: "var(--iq-hint)" }}
+                onMouseEnter={e => { if (!isLoading && !docLoading) e.currentTarget.style.color = "var(--iq-teal)"; }}
+                onMouseLeave={e => { e.currentTarget.style.color = "var(--iq-hint)"; }}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
+                <i className="ti ti-paperclip text-lg" />
               </button>
               <button
                 onClick={() => handleSend()}
                 disabled={isLoading || !input.trim()}
-                className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 mb-0.5 disabled:opacity-30"
-                style={{ background: "var(--accent)" }}
+                className="flex-shrink-0 flex items-center justify-center transition-all duration-200 mb-0.5 disabled:opacity-30"
+                style={{ width: 28, height: 28, background: "var(--iq-teal)", borderRadius: "7px" }}
               >
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
+                <i className="ti ti-arrow-up text-base" style={{ color: "#fff" }} />
               </button>
             </div>
 
-            <p className="text-center text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-              General information only — not legal advice. Consult a licensed attorney for your situation.
+            <p className="text-center mt-2" style={{ fontSize: "10.5px", color: "var(--iq-hint)" }}>
+              General information only — not legal advice. Consult a licensed attorney.
             </p>
           </div>
         </div>
@@ -351,8 +543,8 @@ export default function Home() {
         className="fixed bottom-0 left-0 right-0 z-40 md:hidden rounded-t-2xl overflow-hidden transition-transform duration-300"
         style={{
           transform: sourcesOpen ? "translateY(0)" : "translateY(100%)",
-          background: "var(--bg-surface)",
-          border: "1px solid var(--border)",
+          background: "var(--iq-surface)",
+          border: "1px solid var(--iq-border)",
           maxHeight: "70vh",
           height: "70vh",
           display: "flex",
@@ -362,6 +554,8 @@ export default function Home() {
         {showSourcesPanel && sourcesOpen && (
           <SourcesPanel
             sources={activeSources}
+            activeIndex={activeCiteIndex}
+            scores={activeScores}
             onClose={() => { setSourcesOpen(false); setActiveSources([]); }}
           />
         )}
@@ -370,11 +564,13 @@ export default function Home() {
       {/* Desktop right panel */}
       <div
         className="hidden md:block flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out"
-        style={{ width: showSourcesPanel ? "272px" : "0px", opacity: showSourcesPanel ? 1 : 0 }}
+        style={{ width: showSourcesPanel ? "220px" : "0px", opacity: showSourcesPanel ? 1 : 0 }}
       >
         {showSourcesPanel && (
           <SourcesPanel
             sources={activeSources}
+            activeIndex={activeCiteIndex}
+            scores={activeScores}
             onClose={() => setActiveSources([])}
           />
         )}

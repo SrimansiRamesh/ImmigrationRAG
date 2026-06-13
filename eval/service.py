@@ -27,13 +27,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from openai import AzureOpenAI
+from openai import AzureOpenAI, AsyncAzureOpenAI
 
 load_dotenv()
 
@@ -48,7 +46,13 @@ RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # ── Clients ───────────────────────────────────────────────────────────────────
-_gemini = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# Chat client (metric scoring) — Azure OpenAI chat deployment
+chat_client = AsyncAzureOpenAI(
+    azure_endpoint=os.getenv("AZURE_OPENAI_CHAT_ENDPOINT"),
+    api_key=os.getenv("AZURE_OPENAI_CHAT_API_KEY"),
+    api_version=os.getenv("AZURE_OPENAI_CHAT_API_VERSION", "2024-08-01-preview"),
+)
+# Embeddings client (answer-relevance similarity) — unchanged
 _azure  = AzureOpenAI(
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -64,7 +68,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000"],
+    # The frontend now polls GET /result/{eval_id} directly from the browser,
+    # so the frontend origins must be allowed (not just the backend).
+    allow_origins=[
+        "https://immigration-rag.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -85,6 +95,7 @@ class EvalRequest(BaseModel):
     mode:        str           # student | professional
     complexity:  str           # simple | complex
     tokens_used: int
+    eval_id:     Optional[str] = None   # set by main backend; key for polling
 
 
 class EvalResult(BaseModel):
@@ -103,6 +114,10 @@ class EvalResult(BaseModel):
 
 # ── In-memory store (results also persisted to disk) ─────────────────────────
 _results: list[dict] = []
+
+# Completed scores keyed by eval_id, for the frontend polling endpoint.
+# (Named distinctly from _results above, which feeds /metrics and /results.)
+_results_by_id: dict[str, dict] = {}
 
 
 # ── Metric implementations ────────────────────────────────────────────────────
@@ -126,23 +141,21 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
-def _gemini_call(prompt: str, max_tokens: int = 300) -> str:
-    """Lightweight Gemini call for metric scoring."""
-    response = _gemini.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.0,
-            max_output_tokens=max_tokens,
-        )
+async def _chat_call(prompt: str, max_tokens: int = 300) -> str:
+    """Lightweight Azure OpenAI chat call for metric scoring."""
+    response = await chat_client.chat.completions.create(
+        model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=max_tokens,
     )
-    return response.text.strip()
+    return (response.choices[0].message.content or "").strip()
 
 
-def score_faithfulness(answer: str, context: str) -> float:
+async def score_faithfulness(answer: str, context: str) -> float:
     """
     Faithfulness: fraction of answer claims supported by context.
-    Uses Gemini to identify and verify each claim.
+    Uses the LLM to identify and verify each claim.
     """
     prompt = f"""Evaluate whether each factual claim in the answer is supported by the context.
 
@@ -157,7 +170,7 @@ Format: <claim> | YES or NO
 Only include factual claims, not disclaimers or general statements."""
 
     try:
-        raw = _gemini_call(prompt, max_tokens=400)
+        raw = await _chat_call(prompt, max_tokens=400)
         lines = [l.strip() for l in raw.split("\n") if "|" in l]
         if not lines:
             return 1.0
@@ -168,7 +181,7 @@ Only include factual claims, not disclaimers or general statements."""
         return 0.5
 
 
-def score_answer_relevance(question: str, answer: str) -> float:
+async def score_answer_relevance(question: str, answer: str) -> float:
     """
     Answer relevance: does the answer address the question?
     Generates reverse questions from the answer, measures similarity to original.
@@ -178,7 +191,7 @@ Answer: {answer[:800]}
 Output one question per line, nothing else."""
 
     try:
-        raw = _gemini_call(prompt, max_tokens=150)
+        raw = await _chat_call(prompt, max_tokens=150)
         gen_questions = [
             l.strip() for l in raw.split("\n")
             if l.strip() and len(l.strip()) > 10
@@ -198,7 +211,7 @@ Output one question per line, nothing else."""
         return 0.5
 
 
-def score_context_precision(question: str, context: str) -> float:
+async def score_context_precision(question: str, context: str) -> float:
     """
     Context precision: is the retrieved context useful for the question?
     """
@@ -208,7 +221,7 @@ Context: {context[:1500]}
 Answer YES or NO."""
 
     try:
-        raw = _gemini_call(prompt, max_tokens=50)
+        raw = await _chat_call(prompt, max_tokens=50)
         return 1.0 if "YES" in raw.upper() else 0.0
     except Exception as e:
         log.warning(f"Context precision scoring failed: {e}")
@@ -217,10 +230,10 @@ Answer YES or NO."""
 
 # ── Background eval task ──────────────────────────────────────────────────────
 
-def run_eval(req: EvalRequest) -> None:
+async def run_eval(req: EvalRequest) -> dict:
     """
     Runs all three metrics and persists the result.
-    Called as a background task — never blocks the main response.
+    Returns the result dict so the caller can return scores synchronously.
     """
     eval_id = hashlib.md5(
         f"{req.session_id}{req.question}{time.time()}".encode()
@@ -229,9 +242,9 @@ def run_eval(req: EvalRequest) -> None:
     log.info(f"Running eval [{eval_id}] for session {req.session_id[:8]}...")
 
     try:
-        faithfulness      = score_faithfulness(req.answer, req.context)
-        answer_relevance  = score_answer_relevance(req.question, req.answer)
-        context_precision = score_context_precision(req.question, req.context)
+        faithfulness      = await score_faithfulness(req.answer, req.context)
+        answer_relevance  = await score_answer_relevance(req.question, req.answer)
+        context_precision = await score_context_precision(req.question, req.context)
 
         # Weighted overall score
         # Faithfulness weighted highest for legal/compliance content
@@ -257,6 +270,15 @@ def run_eval(req: EvalRequest) -> None:
             "timestamp":         datetime.now().isoformat(),
             "status":            "success",
         }
+
+        # Make scores retrievable by eval_id for the frontend polling endpoint
+        if req.eval_id:
+            _results_by_id[req.eval_id] = {
+                "faithfulness":      faithfulness,
+                "answer_relevance":  answer_relevance,
+                "context_precision": context_precision,
+                "overall":           overall,
+            }
 
     except Exception as e:
         log.error(f"Eval [{eval_id}] failed: {e}")
@@ -292,6 +314,8 @@ def run_eval(req: EvalRequest) -> None:
         f"overall={result['overall_score']:.2f}"
     )
 
+    return result
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -304,17 +328,31 @@ async def health():
 
 
 @app.post("/evaluate")
-async def evaluate(req: EvalRequest, background_tasks: BackgroundTasks):
+async def evaluate(req: EvalRequest):
     """
-    Accepts eval request and immediately returns 202 Accepted.
-    Actual evaluation runs in the background — never blocks caller.
+    Compute the three metrics and return them synchronously so the main
+    backend can include scores in the chat response. Each result is still
+    persisted to the daily JSONL file (inside run_eval).
 
-    Why 202 and not 200?
-    202 Accepted means "I received your request and will process it"
-    without implying it's done. Semantically correct for async tasks.
+    The LLM scoring calls are async (Azure OpenAI); the main backend enforces
+    its own short timeout — if scoring is slow, it simply drops the scores.
     """
-    background_tasks.add_task(run_eval, req)
-    return {"status": "accepted", "message": "Evaluation queued"}
+    result = await run_eval(req)
+    return {
+        "status":            result.get("status", "success"),
+        "faithfulness":      result["faithfulness"],
+        "answer_relevance":  result["answer_relevance"],
+        "context_precision": result["context_precision"],
+        "overall_score":     result["overall_score"],
+    }
+
+
+@app.get("/result/{eval_id}")
+async def get_result(eval_id: str):
+    """Return completed scores for an eval_id, or 404 if not ready yet."""
+    if eval_id not in _results_by_id:
+        raise HTTPException(status_code=404, detail="Not ready")
+    return _results_by_id[eval_id]
 
 
 @app.get("/metrics")
