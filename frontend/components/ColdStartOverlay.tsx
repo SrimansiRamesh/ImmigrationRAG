@@ -19,7 +19,7 @@ const MESSAGES = [
   "Almost ready…",
 ];
 
-const POLL_INTERVAL   = 4000;   // ms between health checks
+const POLL_INTERVAL   = 6000;   // ms between health checks (raised from 4s to reduce overlap with the 10s checkHealth timeout)
 const MAX_WAIT        = 120000; // 2 min max before we give up and hide anyway
 const PROGRESS_STEP   = 100 / (MAX_WAIT / POLL_INTERVAL); // % per poll tick
 
