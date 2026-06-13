@@ -34,12 +34,16 @@ export default function ColdStartOverlay() {
   let done    = false;
   let interval: ReturnType<typeof setInterval>;
 
+  const cleanupListeners = () => {
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("focus", onVisible);
+  };
+
   const dismiss = () => {
     if (done) return;
     done = true;
     clearInterval(interval);
-    document.removeEventListener("visibilitychange", onVisible);
-    window.removeEventListener("focus", onVisible);
+    cleanupListeners();
     setProgress(100);
     setFadeOut(true);
     setTimeout(() => setVisible(false), 600);
@@ -54,38 +58,49 @@ export default function ColdStartOverlay() {
     if (await checkHealth()) dismiss();
   };
 
-  checkHealth().then(healthy => {
-    if (healthy || done) {
-      return;
-    }
+  // The actual probe — only started once the page is genuinely active.
+  const startProbing = () => {
+    if (done) return;
+    checkHealth().then(healthy => {
+      if (healthy || done) return;
 
-    setVisible(true);
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
+      setVisible(true);
+      document.addEventListener("visibilitychange", onVisible);
+      window.addEventListener("focus", onVisible);
 
-    // Backend is cold — start polling
-    interval = setInterval(async () => {
-      elapsed += POLL_INTERVAL;
-      setProgress(p => Math.min(p + PROGRESS_STEP, 95));
-      setMsgIdx(prev => Math.min(prev + 1, MESSAGES.length - 1));
+      // Backend is cold — start polling
+      interval = setInterval(async () => {
+        elapsed += POLL_INTERVAL;
+        setProgress(p => Math.min(p + PROGRESS_STEP, 95));
+        setMsgIdx(prev => Math.min(prev + 1, MESSAGES.length - 1));
 
-      const healthy = await checkHealth();
-      if (healthy) {
-        dismiss();
-        return;
-      }
+        const healthy = await checkHealth();
+        if (healthy) {
+          dismiss();
+          return;
+        }
 
-      if (elapsed >= MAX_WAIT) {
-        dismiss();
-      }
-    }, POLL_INTERVAL);
-  });
+        if (elapsed >= MAX_WAIT) {
+          dismiss();
+        }
+      }, POLL_INTERVAL);
+    });
+  };
+
+  // Arc/Chrome prerender pages with throttled timers, which makes the first
+  // health check fail even when the backend is up — producing a false "warming
+  // up" screen. Defer the first check until the prerendered page is activated.
+  if ((document as unknown as { prerendering?: boolean }).prerendering) {
+    document.addEventListener("prerenderingchange", startProbing, { once: true });
+  } else {
+    startProbing();
+  }
 
   return () => {
     done = true;
     clearInterval(interval);
-    document.removeEventListener("visibilitychange", onVisible);
-    window.removeEventListener("focus", onVisible);
+    cleanupListeners();
+    document.removeEventListener("prerenderingchange", startProbing);
   };
 }, []);
 
