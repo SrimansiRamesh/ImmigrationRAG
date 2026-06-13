@@ -129,15 +129,10 @@ export async function parseDocument(file: File): Promise<ParsedDocument> {
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    // 10s timeout (not 3s): the abort timer starts when fetch() is *called*,
-    // but browsers like Arc can delay dispatching the request (tab throttling /
-    // prerender scheduling). A 3s abort fired before the request even left the
-    // tab, turning an otherwise-fast request into a failure ("provisional
-    // headers, 0 B transferred"). cache:"no-store" avoids any stale response.
     const res = await fetch(`${API_BASE}/health`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(3000), // 3 second timeout
     });
+    console.log("Health check response:", res);
     return res.ok;
   } catch {
     return false;
