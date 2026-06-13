@@ -81,6 +81,9 @@ app.add_middleware(
         "https://immigration-rag.vercel.app",
         "http://localhost:3000",
     ],
+    # Also allow this project's Vercel preview/branch deployments, e.g.
+    # https://immigration-rag-srimansi-ramesh.vercel.app
+    allow_origin_regex=r"https://immigration-rag[a-z0-9-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
