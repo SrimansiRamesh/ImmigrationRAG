@@ -16,7 +16,7 @@ export default function MessageBubble({ message, onViewSources, onCiteClick }: M
   if (isUser) {
     return (
       <div className="flex justify-end px-5 py-2">
-        <div className="max-w-[75%] self-end flex flex-col items-end gap-1.5">
+        <div className="max-w-[85%] md:max-w-[75%] self-end flex flex-col items-end gap-1.5">
           {message.attachment && (
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
@@ -46,7 +46,7 @@ export default function MessageBubble({ message, onViewSources, onCiteClick }: M
 
   return (
     <div className="flex items-start px-5 py-3">
-      <div className="min-w-0 max-w-[75%] self-start">
+      <div className="min-w-0 max-w-[85%] md:max-w-[75%] self-start">
         <div
           className="px-4 py-3 text-sm leading-relaxed"
           style={{
